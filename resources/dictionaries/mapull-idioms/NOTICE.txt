@@ -1,0 +1,8 @@
+成语词典
+Source: https://github.com/mapull/chinese-dictionary
+Snapshot: 2026-10-24
+Source checksum: sha256-54f0cefb5b7d
+Offline StarDict format conversion; definitions and readings come from the upstream dataset.
+OpenCC is used to normalize displayed Hanzi to Simplified Chinese and add search aliases.
+OpenCC mappings: https://github.com/BYVoid/OpenCC (Apache-2.0; see OpenCC.LICENSE).
+Source: mapull/chinese-dictionary, declared MIT by upstream. See mapull.README for its complete data provenance statement.

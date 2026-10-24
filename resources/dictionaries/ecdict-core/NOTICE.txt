@@ -1,0 +1,8 @@
+ECDICT 常用英汉词典
+Source: https://github.com/skywind3000/ECDICT
+Snapshot: 2026-10-24
+Source checksum: sha256-1a6947e04785
+Offline StarDict format conversion; definitions and readings come from the upstream dataset.
+OpenCC is used to normalize displayed Hanzi to Simplified Chinese and add search aliases.
+OpenCC mappings: https://github.com/BYVoid/OpenCC (Apache-2.0; see OpenCC.LICENSE).
+ECDICT by skywind3000; MIT. Core selection: BNC/FRQ <= 30000, exam tags, Collins or Oxford core.

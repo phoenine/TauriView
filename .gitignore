@@ -1,0 +1,17 @@
+# 依赖与构建产物
+node_modules/
+dist/
+src-tauri/target/
+src-tauri/gen/
+
+# 临时/测试用副本
+public/tmp/
+.dictionary-sources/
+.local-tts/
+__pycache__/
+*.log
+
+# 系统噪声
+.DS_Store
+Thumbs.db
+desktop.ini

@@ -1,0 +1,42 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "TauriView",
+  "version": "0.1.0",
+  "identifier": "com.tauriview.reader",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://127.0.0.1:5183",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "title": "TauriView",
+        "width": 1280,
+        "height": 840,
+        "minWidth": 900,
+        "minHeight": 600,
+        "resizable": true,
+        "decorations": false,
+        "shadow": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost https:"
+    }
+  },
+  "bundle": {
+    "resources": {
+      "../resources/dictionaries/": "dictionaries/",
+      "../resources/tts/worker.py": "tts/worker.py",
+      "../resources/tts/model.json": "tts/model.json",
+      "../resources/tts/setup.ps1": "tts/setup.ps1",
+      "../resources/tts/requirements.txt": "tts/requirements.txt"
+    },
+    "active": true,
+    "targets": ["nsis", "msi"],
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/icon.ico"]
+  }
+}

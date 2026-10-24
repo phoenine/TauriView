@@ -1,0 +1,32 @@
+[
+  {
+    "id": "ecdict-core",
+    "name": "ECDICT 常用英汉词典",
+    "kind": "english",
+    "count": 38243,
+    "version": "2026-10-24",
+    "source": "https://github.com/skywind3000/ECDICT",
+    "enabled": true,
+    "builtin": true
+  },
+  {
+    "id": "mapull-chinese",
+    "name": "汉语词典",
+    "kind": "chinese",
+    "count": 308341,
+    "version": "2026-10-24",
+    "source": "https://github.com/mapull/chinese-dictionary",
+    "enabled": true,
+    "builtin": true
+  },
+  {
+    "id": "mapull-idioms",
+    "name": "成语词典",
+    "kind": "idiom",
+    "count": 49635,
+    "version": "2026-10-24",
+    "source": "https://github.com/mapull/chinese-dictionary",
+    "enabled": true,
+    "builtin": true
+  }
+]

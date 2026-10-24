@@ -1,0 +1,10 @@
+StarDict's dict ifo file
+version=2.4.2
+bookname=ECDICT 常用英汉词典
+wordcount=38243
+idxfilesize=641519
+synwordcount=32506
+sametypesequence=tm
+date=2026-10-24
+website=https://github.com/skywind3000/ECDICT
+description=Offline text dictionary; source SHA256: sha256-1a6947e04785; see NOTICE.txt and license files.

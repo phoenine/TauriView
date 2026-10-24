@@ -1,0 +1,10 @@
+StarDict's dict ifo file
+version=2.4.2
+bookname=汉语词典
+wordcount=308341
+idxfilesize=5100691
+synwordcount=3232
+sametypesequence=tm
+date=2026-10-24
+website=https://github.com/mapull/chinese-dictionary
+description=Offline text dictionary; source SHA256: sha256-a85d96a3c6e5; see NOTICE.txt and license files.
