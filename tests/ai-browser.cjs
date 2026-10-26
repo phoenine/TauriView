@@ -17,6 +17,26 @@ const { expect } = require("playwright/test");
   try {
     browser = await chromium.launch({ channel: "msedge", headless: true });
     const page = await browser.newPage({ viewport: { width: 1280, height: 840 } });
+    await page.addInitScript(() => {
+      const original = window.fetch.bind(window);
+      window.fetch = (url, options) => {
+        if (!window.__testStreaming || !String(url).startsWith('https://ai.example/')) return original(url, options);
+        window.__streamPayload = JSON.parse(options.body);
+        const encoder = new TextEncoder();
+        const event = content => encoder.encode(`data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`);
+        return Promise.resolve(new Response(new ReadableStream({ start(controller) {
+          let aborted = false;
+          options.signal.addEventListener('abort', () => { aborted = true; controller.error(new DOMException('Stopped', 'AbortError')); }, { once: true });
+          controller.enqueue(event('逐步显示的前半段'));
+          window.__finishAiStream = () => {
+            if (aborted) return;
+            controller.enqueue(event('，这是**完整结果**。'));
+            controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+            controller.close();
+          };
+        } }), { headers: { 'content-type': 'text/event-stream' } }));
+      };
+    });
     page.setDefaultTimeout(20000);
     const errors = [];
     page.on("pageerror", (error) => errors.push(error.message));
@@ -132,6 +152,30 @@ const { expect } = require("playwright/test");
     assert.equal(capture.includes("首次重复文字"), true);
     assert.equal(capture.includes("后续秘密"), false);
     assert.equal(capture.includes("不应发送"), false);
+    // Both explanation and examples must appear before the stream completes.
+    await page.evaluate(async () => {
+      window.__testStreaming = true;
+      const { openReadingAi } = await import('/src/ai/ui.ts');
+      openReadingAi({ bookId: 'stream', title: '流式测试', author: '', chapter: '', cfi: 'stream', percent: 0, text: '测试选区' });
+    });
+    await expect(page.locator('#aiBody')).toHaveText('逐步显示的前半段');
+    await expect(page.locator('#aiExample')).toBeDisabled();
+    await expect(page.locator('#aiToNote')).toBeDisabled();
+    assert.equal(await page.evaluate(() => window.__streamPayload.stream), true);
+    await page.evaluate(() => window.__finishAiStream());
+    await expect(page.locator('#aiBody strong')).toHaveText('完整结果');
+    await expect(page.locator('#aiExample')).toBeEnabled();
+    await page.locator('#aiExample').click();
+    await expect(page.locator('#aiBody')).toHaveText('逐步显示的前半段');
+    await expect(page.locator('#aiToNote')).toBeDisabled();
+    await page.evaluate(() => window.__finishAiStream());
+    await expect(page.locator('#aiExample')).toBeEnabled();
+    await expect(page.locator('#aiBody strong')).toHaveText('完整结果');
+    await page.locator('#aiExample').click();
+    await expect(page.locator('#aiBody')).toHaveText('逐步显示的前半段');
+    await page.keyboard.press('Escape');
+    await page.evaluate(() => window.__finishAiStream());
+    await expect(page.locator('#aiBox')).toBeHidden();
     assert.deepEqual(errors, []);
     console.log(JSON.stringify({ passed: true, screenshots: output, checks: "compact card, settings navigation, automatic context, examples, original annotation anchor, close cancellation, no future text, light/dark" }));
   } finally { await browser?.close(); server.kill(); }

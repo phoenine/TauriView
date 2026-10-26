@@ -882,6 +882,14 @@ async function openText(
     }
   };
 
+  const followListen = (cfi: string) => {
+    void rendition.display(cfi).then(() => {
+      if (gone || listenCfi !== cfi) return;
+      clearListen();
+      paintListen(cfi, false);
+    }).catch(() => { /* 章节已关闭或切换 */ });
+  };
+
   /** 在当前渲染的章节里给该 CFI 所在段落打上 class；返回是否找到 */
   const paintListen = (cfi: string, follow: boolean): boolean => {
     const contents = ((rendition.getContents() as unknown as any[]) ?? []);
@@ -891,29 +899,31 @@ async function openText(
       if (!range) continue;
       const node = range.startContainer;
       const el = node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement;
-      const block = (el?.closest("p,li,blockquote,h1,h2,h3,h4,h5,h6,dd") ?? null) as HTMLElement | null;
+      // 只认段落级元素：加 div/td 会把整块容器染色
+      const block = (el?.closest("p,li,blockquote,h1,h2,h3,h4,h5,h6,dd") ?? el) as HTMLElement | null;
       if (!block) continue;
       block.classList.add("tv-listen");
       listenEl = block;
       if (!follow) return true;
-      // 段落不在当前这一屏：翻到它所在的页
-      // 注意：分页渲染时 iframe 自身宽达整章（如 30000px），要靠 iframe 元素在窗口里的位置换算，
-      // 不能用 iframe 内部的 clientWidth 判断
-      const rect = block.getBoundingClientRect();
+      // 长段落的边界会横跨多页；只检查当前朗读片段的 CFI 起点。
+      // iframe 宽达整章，将局部坐标换算到外层正文舞台后判断是否可见。
+      const point = range.cloneRange();
+      point.collapse(true);
+      const rect = point.getBoundingClientRect();
       const frame = (c.document?.defaultView?.frameElement ?? null) as HTMLElement | null;
       const fr = frame?.getBoundingClientRect();
+      const viewport = stage.getBoundingClientRect();
       let offScreen: boolean;
       if (fr) {
         const left = fr.left + rect.left;
         const top = fr.top + rect.top;
-        offScreen = left + rect.width < 4 || left > window.innerWidth - 4 || top + rect.height < 4 || top > window.innerHeight - 4;
+        offScreen = left + rect.width < viewport.left - 1 || left > viewport.right + 1 || top + rect.height < viewport.top - 1 || top > viewport.bottom + 1;
       } else {
         const width = c.document?.documentElement?.clientWidth ?? window.innerWidth;
         offScreen = rect.right <= 1 || rect.left >= width - 1;
       }
       if (offScreen) {
-        try { rendition.display(cfi); } catch { /* 忽略 */ }
-        window.setTimeout(() => { if (listenCfi === cfi) { listenEl?.classList.remove("tv-listen"); listenEl = null; paintListen(cfi, false); } }, 320);
+        followListen(cfi);
       }
       return true;
     }
@@ -1239,8 +1249,8 @@ async function openText(
       listenCfi = cfi;
       if (!cfi) return true;
       if (paintListen(cfi, follow)) return true;
-      // 不在当前章节：翻过去再画（渲染完成后的重试由调用方负责）
-      if (follow) { try { rendition.display(cfi); } catch { /* 忽略 */ } }
+      // 不在当前章节：翻过去，等渲染完成后再画。
+      if (follow) followListen(cfi);
       return false;
     },
     display: (cfi: string) => { void rendition.display(startCfiOf(cfi)); },

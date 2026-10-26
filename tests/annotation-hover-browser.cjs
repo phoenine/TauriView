@@ -66,7 +66,8 @@ async function chineseBook() {
       sel.removeAllRanges();
     });
     await expect(page.locator('.tv-note-marker')).toHaveCount(0);
-    await page.locator("#noteInput").fill("我的批注\n第二行 <b>保持纯文本</b>\n" + "较长的备注内容。".repeat(100));
+    const markdownNote = "**我的批注**\n第二行 <b>保持纯文本</b>\n\n- **重点一**\n- 重点二\n\n1. 第一步\n2. 第二步\n\n" + "较长的备注内容。".repeat(100);
+    await page.locator("#noteInput").fill(markdownNote);
     await page.locator("#noteSave").click();
     await page.waitForSelector(".tv-highlight rect", { state: "attached" });
     await expect(page.locator('.tv-note-marker')).toHaveCount(1);
@@ -75,6 +76,12 @@ async function chineseBook() {
       const book = storage.listBooks()[0];
       return { bookId: book.id, highlight: (await storage.loadAnnotations(book.id))[0] };
     });
+    assert.equal(original.highlight.note, markdownNote);
+    await page.evaluate(async () => (await import('/src/annotations-ui.ts')).annOpen());
+    await expect(page.locator('#annList .mark-note strong').first()).toHaveText('我的批注');
+    await expect(page.locator('#annList .mark-note ul > li')).toHaveCount(2);
+    await expect(page.locator('#annList .mark-note ol > li')).toHaveCount(2);
+    await page.locator('#annClose').click();
     const alignment = (cfi = original.highlight.cfi) => page.evaluate(async cfi => {
       const { EpubCFI } = await import('/node_modules/.vite/deps/epubjs.js');
       const frame = Array.from(document.querySelectorAll('#viewer iframe')).find(f => f.contentDocument?.body?.textContent.trim().length > 10);
@@ -120,6 +127,9 @@ async function chineseBook() {
     await expect(page.locator("#notePreview")).toBeHidden();
     await expect(page.locator("#notePreview")).toBeVisible();
     await expect(page.locator("#notePreviewText")).toContainText("<b>保持纯文本</b>");
+    await expect(page.locator('#notePreviewText strong').first()).toHaveText('我的批注');
+    await expect(page.locator('#notePreviewText ul > li')).toHaveCount(2);
+    await expect(page.locator('#notePreviewText ol > li')).toHaveCount(2);
     assert.equal(await page.locator("#notePreviewText b").count(), 0);
     for (const r of rects) { await hover(r); await expect(page.locator("#notePreview")).toBeVisible(); }
     await page.locator("#notePreviewText").hover();
@@ -130,6 +140,7 @@ async function chineseBook() {
     await page.locator("#notePreviewEdit").click();
     await expect(page.locator("#noteBox")).toBeVisible();
     await expect(page.locator("#notePreview")).toBeHidden();
+    await expect(page.locator('#noteInput')).toHaveValue(markdownNote);
     await page.locator("#noteInput").fill("修改后的备注");
     await page.locator("#noteSave").click();
     await hover(rects[0]);

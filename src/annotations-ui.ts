@@ -15,6 +15,7 @@ import {
   listBooks,
 } from "./storage";
 import { HIGHLIGHT_COLORS } from "./reader/epub";
+import { renderNoteMarkdown } from "./note-markdown";
 import type { PassageContext, ReadingAnchor } from "./ai/context";
 import { initReadingAi, openReadingAi, closeReadingAi } from "./ai/ui";
 import { initDictionary, openDictionary, closeDictionary, type DictionarySnapshot } from "./dictionary/ui";
@@ -83,7 +84,7 @@ export function annOnHover(hit: { id: string; rect: { left: number; top: number;
   previewShowTimer = window.setTimeout(() => {
     previewShowTimer = undefined;
     if (previewId !== h.id || !noteBox.hidden || !hlBar.hidden) return;
-    notePreviewText.textContent = h.note;
+    renderNoteMarkdown(notePreviewText, h.note);
     notePreview.style.setProperty("--note-color", HIGHLIGHT_COLORS[h.color] ?? HIGHLIGHT_COLORS["1"]);
     notePreview.hidden = false;
     const width = notePreview.offsetWidth;
@@ -396,7 +397,7 @@ function highlightRow(h: Highlight, isNote: boolean): HTMLElement {
   if (h.note) {
     const note = document.createElement("div");
     note.className = "mark-note";
-    note.textContent = h.note;
+    renderNoteMarkdown(note, h.note);
     body.appendChild(note);
   }
 

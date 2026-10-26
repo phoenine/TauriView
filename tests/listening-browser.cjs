@@ -17,7 +17,7 @@ async function epub() {
   zip.file('META-INF/container.xml', '<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="book.opf" media-type="application/oebps-package+xml"/></rootfiles></container>');
   zip.file('book.opf', '<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="uid"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="uid">listen-test</dc:identifier><dc:title>听书测试</dc:title><dc:language>zh-CN</dc:language></metadata><manifest><item id="nav" href="nav.xhtml" properties="nav" media-type="application/xhtml+xml"/><item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="chapter"/></spine></package>');
   zip.file('nav.xhtml', '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>目录</title></head><body><nav xmlns:epub="http://www.idpf.org/2007/ops" epub:type="toc"><ol><li><a href="chapter.xhtml">第一章 清晨</a></li></ol></nav></body></html>');
-  zip.file('chapter.xhtml', '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>清晨</title></head><body><h1>第一章 清晨</h1><p id="one">清晨的阳光洒进窗户。今天是个好天气。</p><p id="two">清晨的阳光洒进窗户。我们从这里开始听书。</p><p id="three">接下来的一段，继续讲述新的故事。</p></body></html>');
+  zip.file('chapter.xhtml', '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>清晨</title></head><body><h1>第一章 清晨</h1><p id="one">清晨的阳光洒进窗户。今天是个好天气。</p><p id="two">清晨的阳光洒进窗户。我们从这里开始听书。</p><p id="three">接下来的一段，继续讲述新的故事。</p><p id="long">' + '这是一段跨越多页的长段落，朗读应跟随正在读到的文字自动翻页。'.repeat(180) + '</p></body></html>');
   const file = path.join(output, 'listening.epub'); fs.writeFileSync(file, await zip.generateAsync({ type: 'nodebuffer' })); return file;
 }
 
@@ -107,6 +107,25 @@ async function epub() {
       const storage = await import('/src/storage.ts'); return storage.getProgress(storage.listBooks()[0].id);
     });
     assert.deepEqual(readingAfter, readingBefore);
+    // A paragraph's union rectangle spans several columns and still overlaps the
+    // first page when the spoken CFI is many pages ahead. Follow the actual CFI.
+    const targetIndex = state.task.segments.length - 2;
+    while (state.task.listenIndex < targetIndex - 1) {
+      const next = state.task.listenIndex + 1;
+      await page.locator('#listenNext').click();
+      await expect.poll(() => state.task.listenIndex).toBe(next);
+      await expect.poll(() => requests.filter(r => r.action === 'position').at(-1)?.index).toBe(next);
+    }
+    await page.evaluate(() => window.__testAudio.dispatchEvent(new Event('ended')));
+    await expect.poll(() => state.task.listenIndex).toBe(targetIndex);
+    await expect.poll(() => page.evaluate(async cfi => {
+      const { EpubCFI } = await import('/node_modules/.vite/deps/epubjs.js');
+      const frame = document.querySelector('#viewer iframe');
+      const range = new EpubCFI(cfi).toRange(frame.contentDocument);
+      const rect = range.getBoundingClientRect(), fr = frame.getBoundingClientRect();
+      const viewport = document.querySelector('.epub-page').getBoundingClientRect();
+      return fr.left + rect.left >= viewport.left - 2 && fr.left + rect.right <= viewport.right + 2;
+    }, state.task.segments[targetIndex].cfi)).toBe(true);
     await page.locator('#listenPlay').click();
     await expect(page.locator('#listenPlay')).toHaveAttribute('aria-label', '播放朗读');
     await page.locator('#listenHide').click();
@@ -115,8 +134,7 @@ async function epub() {
     await expect(page.locator('#listenPlayer')).toBeVisible();
     await page.locator('#listenPlay').click();
     await expect(page.locator('#listenPlay')).toHaveAttribute('aria-label', '播放朗读');
-    await page.evaluate(() => window.__tauriview.showLibrary());
-    await expect(page.locator('#listenPlayer')).toBeVisible();
+    // Open settings while still in the reader: leaving a book stops listening.
     await page.locator('#listenMore').click(); await page.locator('#listenSettings').click();
     await expect(page.locator('.sp-pane[data-pane="listening"]')).toBeVisible();
     await expect(page.locator('#setTtsStatus')).toContainText('模型已就绪');

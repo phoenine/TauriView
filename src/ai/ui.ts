@@ -7,6 +7,8 @@ const example = $<HTMLButtonElement>("aiExample"), toNote = $<HTMLButtonElement>
 let anchor: ReadingAnchor | null = null;
 let history: ChatMessage[] = [];
 let answer = "";
+/** 流式过程中的临时文本，出错时保留，不要整段吞掉 */
+let streamed = "";
 let lastQuestion = "";
 let request: AbortController | null = null;
 let version = 0;
@@ -22,6 +24,9 @@ function busy(): void {
   toNote.textContent = saving ? "补充中…" : savedAnswers.has(answer) ? "已补充" : "补充到批注";
 }
 function renderAnswer(text: string): void {
+  const scrollTop = body.scrollTop;
+  // 用户本来就在底部（或内容还没撑满）时跟随新内容，否则原地不动
+  const atBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 24;
   body.className = "ai-body";
   body.replaceChildren();
   // 只支持重点加粗，不把模型输出作为 HTML 执行。
@@ -32,7 +37,7 @@ function renderAnswer(text: string): void {
       body.appendChild(strong);
     } else body.appendChild(document.createTextNode(part));
   }
-  body.scrollTop = 0;
+  body.scrollTop = atBottom ? body.scrollHeight : scrollTop;
 }
 function cancel(): void {
   ++version;
@@ -64,21 +69,39 @@ async function ask(text: string): Promise<void> {
   cancel();
   const current = anchor, token = version;
   const controller = new AbortController();
-  request = controller; lastQuestion = text; answer = "";
+  request = controller; lastQuestion = text; answer = ""; streamed = "";
   $("aiRetry").hidden = true;
   body.className = "ai-body loading";
   body.textContent = text === EXPLAIN ? "正在理解…" : "正在举例…";
+  body.scrollTop = 0;
   busy();
   try {
     const messages = buildReadingMessages(current, "nearby", history, text);
-    const output = await requestReadingAi(loadAiConfig(), messages, controller.signal);
+    // 短答案就够用：理解给 260 字预算，举例给 360 字
+    const limits = text === EXPLAIN ? { maxTokens: 320, maxChars: 260 } : { maxTokens: 420, maxChars: 360 };
+    const output = await requestReadingAi(loadAiConfig(), messages, controller.signal, (partial) => {
+      if (version !== token || current !== anchor || controller.signal.aborted) return;
+      streamed = partial;
+      renderAnswer(partial);
+    }, limits);
     if (version !== token || current !== anchor) return;
     history.push({ role: "user", content: text }, { role: "assistant", content: output });
     answer = output; renderAnswer(output);
   } catch (error) {
     if (version !== token || controller.signal.aborted) return;
-    body.className = "ai-body error";
-    body.textContent = `理解失败：${(error as Error).message || String(error)}`;
+    const reason = (error as Error).message || String(error);
+    if (streamed) {
+      // 已经流出来的内容不要丢，底部补一行原因
+      renderAnswer(streamed);
+      const warn = document.createElement("div");
+      warn.className = "ai-partial-warn";
+      warn.textContent = `（输出中断：${reason}）`;
+      body.appendChild(warn);
+      answer = streamed;
+    } else {
+      body.className = "ai-body error";
+      body.textContent = `理解失败：${reason}`;
+    }
     $("aiRetry").hidden = false;
   } finally {
     if (version === token) { request = null; busy(); }

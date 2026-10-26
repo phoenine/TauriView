@@ -29,18 +29,66 @@ export function saveAiConfig(config: AiConfig): boolean {
   } catch { return false; }
 }
 
-export async function requestReadingAi(config: AiConfig, messages: ChatMessage[], signal: AbortSignal): Promise<string> {
+/** 输出预算：maxTokens 让服务端提前收口，maxChars 在客户端到量就停，避免满屏。 */
+export interface AiLimits { maxTokens?: number; maxChars?: number }
+
+/** SSE frames may span network chunks, including in the middle of UTF-8 characters. */
+function aiStream(onUpdate: (text: string) => void, limits?: AiLimits) {
+  let pending = "", content = "", finished = false, done = false, limited = false;
+  const frame = (event: string) => {
+    if (done) return;
+    const data = event.split(/\r\n|\n|\r/).filter(line => line.startsWith("data:"))
+      .map(line => line.slice(5).replace(/^ /, "")).join("\n");
+    if (!data) return;
+    if (data.trim() === "[DONE]") { done = true; return; }
+    let value: any;
+    try { value = JSON.parse(data); } catch { throw new Error("AI 流式响应格式错误，请重试。"); }
+    if (value.error) throw new Error(value.error.message || "AI 接口返回错误，请重试。");
+    const choice = value.choices?.[0];
+    const delta = choice?.delta?.content;
+    if (typeof delta === "string" && delta) {
+      content += delta; onUpdate(content);
+      // 到量就停：不再等模型把话说完，省 token 也不让面板无限长
+      if (limits?.maxChars && content.length >= limits.maxChars) { limited = true; done = true; }
+    }
+    if (choice?.finish_reason != null) finished = true;
+  };
+  return {
+    push(text: string) {
+      pending += text;
+      let boundary: RegExpExecArray | null;
+      while ((boundary = /\r\n\r\n|\n\n|\r\r/.exec(pending))) {
+        frame(pending.slice(0, boundary.index));
+        pending = pending.slice(boundary.index + boundary[0].length);
+      }
+    },
+    get done() { return done; },
+    finish() {
+      if (pending.trim()) frame(pending);
+      if (!done && !finished) throw new Error("AI 输出中断，请重试。");
+      if (!limited) return content;
+      // 截断在句子边界上，别留半句话
+      let cut = Math.max(content.lastIndexOf("。"), content.lastIndexOf("！"), content.lastIndexOf("？"), content.lastIndexOf("\n"));
+      if (cut < content.length * 0.55) cut = content.length - 1;
+      return content.slice(0, cut + 1).trimEnd();
+    },
+  };
+}
+
+export async function requestReadingAi(config: AiConfig, messages: ChatMessage[], signal: AbortSignal, onUpdate?: (text: string) => void, limits?: AiLimits): Promise<string> {
   const cfg = validateAiConfig(config);
   signal.throwIfAborted();
-  const body = { model: cfg.model, messages, temperature: 0.3, max_tokens: 1500 };
+  const body = { model: cfg.model, messages, temperature: 0.3, max_tokens: limits?.maxTokens ?? 1500, ...(onUpdate ? { stream: true } : {}) };
   let content: unknown;
   if (isTauri) {
     const { invoke, Channel } = await import("@tauri-apps/api/core");
     signal.throwIfAborted();
     const id = crypto.randomUUID();
     content = await new Promise<string>((resolve, reject) => {
-      const result = new Channel<{ content?: string; error?: string }>();
-      let started = false;
+      const result = new Channel<{ content?: string; error?: string; chunk?: number[]; done?: boolean }>();
+      const stream = aiStream(text => onUpdate?.(text), limits);
+      const decoder = new TextDecoder();
+      let started = false, settled = false;
       const cleanup = () => signal.removeEventListener("abort", abort);
       const abort = () => {
         cleanup();
@@ -48,10 +96,29 @@ export async function requestReadingAi(config: AiConfig, messages: ChatMessage[]
         reject(new DOMException("已停止", "AbortError"));
       };
       result.onmessage = (message) => {
-        cleanup();
-        if (signal.aborted) return;
-        if (message.error) reject(new Error(message.error));
-        else resolve(message.content ?? "");
+        if (signal.aborted || settled) return;
+        try {
+          if (message.error) throw new Error(message.error);
+          if (message.chunk) {
+            stream.push(decoder.decode(new Uint8Array(message.chunk), { stream: true }));
+            // 到预算了：告诉 Rust 停掉上游，用已有内容收尾
+            if (stream.done) {
+              settled = true; cleanup();
+              void invoke("cancel_ai_request", { id }).catch(() => {});
+              resolve(stream.finish());
+            }
+            return;
+          }
+          cleanup();
+          settled = true;
+          if (typeof message.content === "string") { onUpdate?.(message.content); resolve(message.content); }
+          else if (message.done) { stream.push(decoder.decode()); resolve(stream.finish()); }
+          else resolve("");
+        } catch (error) {
+          settled = true;
+          cleanup(); reject(error);
+          void invoke("cancel_ai_request", { id }).catch(() => {});
+        }
       };
       signal.addEventListener("abort", abort, { once: true });
       if (signal.aborted) { abort(); return; }
@@ -72,8 +139,24 @@ export async function requestReadingAi(config: AiConfig, messages: ChatMessage[]
         body: JSON.stringify(body),
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}：请检查接口地址、模型、Key 或额度。`);
-      const data = await response.json();
-      content = data?.choices?.[0]?.message?.content;
+      if (onUpdate && response.headers?.get("content-type")?.includes("text/event-stream")) {
+        if (!response.body) throw new Error("AI 接口没有返回输出流。");
+        const reader = response.body.getReader(), decoder = new TextDecoder();
+        const stream = aiStream(onUpdate, limits);
+        try {
+          while (!stream.done) {
+            const chunk = await reader.read();
+            if (chunk.done) break;
+            stream.push(decoder.decode(chunk.value, { stream: true }));
+          }
+          stream.push(decoder.decode());
+          content = stream.finish();
+        } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
+      } else {
+        const data = await response.json();
+        content = data?.choices?.[0]?.message?.content;
+        if (typeof content === "string") onUpdate?.(content);
+      }
     } catch (error) {
       if (controller.signal.aborted && !signal.aborted) throw new Error("AI 请求超时，请重试。");
       throw error;

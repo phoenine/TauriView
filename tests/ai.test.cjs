@@ -5,7 +5,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const ts = require("typescript");
 function load(file, globals = {}) {
-  const context = vm.createContext({ exports: {}, URL, AbortController, DOMException, ...globals });
+  const context = vm.createContext({ exports: {}, URL, AbortController, DOMException, TextDecoder, ...globals });
   const source = fs.readFileSync(path.join(__dirname, "..", file), "utf8");
   vm.runInContext(ts.transpileModule(source, { compilerOptions: {
     target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS,
@@ -83,6 +83,76 @@ test("browser cancellation aborts the actual request", async () => {
   assert.equal(networkAborted, true);
 });
 
+const streamConfig = { base: "http://localhost/v1", key: "", model: "local" };
+const sse = delta => `data: ${JSON.stringify({ choices: [{ delta: { content: delta } }] })}\r\n\r\n`;
+test("browser streaming shows partial Chinese output before completion and decodes split UTF-8", async () => {
+  let network, sent;
+  const updates = [];
+  const api = client({ fetch: async (_, options) => {
+    sent = JSON.parse(options.body);
+    return new Response(new ReadableStream({ start(controller) { network = controller; } }), { headers: { 'content-type': 'text/event-stream; charset=utf-8' } });
+  } });
+  let completed = false;
+  const waiting = api.requestReadingAi(streamConfig, [], new AbortController().signal, text => updates.push(text)).then(text => { completed = true; return text; });
+  await new Promise(resolve => setImmediate(resolve));
+  const encoded = new TextEncoder().encode(': heartbeat\r\n\r\n' + sse('中文'));
+  for (const byte of encoded) network.enqueue(new Uint8Array([byte]));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(updates, ['中文']);
+  assert.equal(completed, false);
+  assert.equal(sent.stream, true);
+  network.enqueue(new TextEncoder().encode(sse('解释') + 'data: [DONE]\r\n\r\n'));
+  assert.equal(await waiting, '中文解释');
+  assert.deepEqual(updates, ['中文', '中文解释']);
+});
+
+test("streams reject malformed events, service errors and truncated output; JSON fallback still works", async () => {
+  for (const [text, error] of [[sse('未完成'), /输出中断/], ['data: not-json\n\n', /格式错误/], ['data: {"error":{"message":"模型不可用"}}\n\n', /模型不可用/], ['data: [DONE]\n\n', /没有返回正文/]]) {
+    const api = client({ fetch: async () => new Response(text, { headers: { 'content-type': 'text/event-stream' } }) });
+    await assert.rejects(api.requestReadingAi(streamConfig, [], new AbortController().signal, () => {}), error);
+  }
+  const updates = [];
+  const api = client({ fetch: async () => Response.json({ choices: [{ message: { content: '兼容结果' } }] }) });
+  assert.equal(await api.requestReadingAi(streamConfig, [], new AbortController().signal, text => updates.push(text)), '兼容结果');
+  assert.deepEqual(updates, ['兼容结果']);
+});
+
+test("native streaming keeps its channel open for multiple chunks and waits for completion", async () => {
+  let channel;
+  const updates = [];
+  const api = client({ crypto: { randomUUID: () => 'stream-id' }, require: name => name.endsWith('platform') ? { isTauri: true } : {
+    Channel: class { constructor() { channel = this; } },
+    invoke: async (command, args) => { if (command === 'start_ai_request') assert.equal(args.body.stream, true); },
+  } });
+  let completed = false;
+  const waiting = api.requestReadingAi(streamConfig, [], new AbortController().signal, text => updates.push(text)).then(text => { completed = true; return text; });
+  await new Promise(resolve => setImmediate(resolve));
+  for (const byte of new TextEncoder().encode(sse('桌面'))) channel.onmessage({ chunk: [byte] });
+  assert.deepEqual(updates, ['桌面']);
+  assert.equal(completed, false);
+  channel.onmessage({ chunk: [...new TextEncoder().encode(sse('输出') + 'data: [DONE]\n\n')] });
+  channel.onmessage({ done: true, content: null });
+  assert.equal(await waiting, '桌面输出');
+  assert.deepEqual(updates, ['桌面', '桌面输出']);
+});
+
+test("cancelling a native stream aborts the backend and ignores subsequent chunks", async () => {
+  let channel;
+  const calls = [], updates = [], controller = new AbortController();
+  const api = client({ crypto: { randomUUID: () => 'cancel-stream' }, require: name => name.endsWith('platform') ? { isTauri: true } : {
+    Channel: class { constructor() { channel = this; } },
+    invoke: async command => { calls.push(command); },
+  } });
+  const waiting = api.requestReadingAi(streamConfig, [], controller.signal, text => updates.push(text));
+  await new Promise(resolve => setImmediate(resolve));
+  channel.onmessage({ chunk: [...new TextEncoder().encode(sse('部分输出'))] });
+  controller.abort();
+  await assert.rejects(waiting, { name: 'AbortError' });
+  channel.onmessage({ chunk: [...new TextEncoder().encode(sse('迟到结果'))] });
+  assert.deepEqual(updates, ['部分输出']);
+  assert.deepEqual(calls, ['start_ai_request', 'cancel_ai_request']);
+});
+
 test("native transport receives results through its own channel", async () => {
   let channel;
   const calls = [];
@@ -139,4 +209,27 @@ test("annotation save reports transaction failure even after the write request s
   });
   await assert.rejects(storage.saveAnnotations("book", []), /quota exceeded/);
   assert.equal(closed, true);
+});
+
+test("output budget: request carries max_tokens and streaming stops at a sentence boundary", async () => {
+  let sent, network;
+  const updates = [];
+  const api = client({ fetch: async (_, options) => {
+    sent = JSON.parse(options.body);
+    return new Response(new ReadableStream({ start(controller) { network = controller; } }), {
+      headers: { "content-type": "text/event-stream; charset=utf-8" },
+    });
+  } });
+  const sentence = (n) => `data: ${JSON.stringify({ choices: [{ delta: { content: `第${n}句：这是一段足够长的解释文字。` } }] })}\n\n`;
+  const waiting = api.requestReadingAi({ base: "http://localhost/v1", key: "", model: "m" }, [], new AbortController().signal,
+    (text) => updates.push(text), { maxTokens: 320, maxChars: 20 });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(sent.max_tokens, 320);
+  assert.equal(sent.stream, true);
+  network.enqueue(new TextEncoder().encode(sentence(1) + sentence(2) + sentence(3)));
+  const text = await waiting;
+  // 到预算就收尾，且截在句号上，不留半句
+  assert.ok(text.length >= 20 && text.length <= 40, text);
+  assert.ok(text.endsWith("。"), text);
+  assert.ok(updates.length <= 3);
 });

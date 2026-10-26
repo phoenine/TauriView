@@ -786,6 +786,17 @@ body.narrow-margin .epub-page { inset: 3%; }
 .tv-note-marker:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .note-actions { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
 .note-actions .spacer { flex: 1; }
+.note-markdown-hint { margin-top: 6px; font-size: 11px; line-height: 1.5; color: var(--sheet-sub, #6b6b6b); }
+.note-markdown { white-space: normal; overflow-wrap: anywhere; line-height: 1.65; }
+.note-markdown p { margin: 0 0 .55em; white-space: pre-wrap; }
+.note-markdown ul, .note-markdown ol { margin: 0 0 .55em; padding-left: 1.8em; }
+.note-markdown ul { list-style: disc; }
+.note-markdown ol { list-style: decimal; }
+.note-markdown li { white-space: pre-wrap; }
+.note-markdown > :last-child { margin-bottom: 0; }
+.note-markdown strong { font-weight: 700; }
+.ai-partial-warn { margin-top: 8px; font-size: 12px; color: #c0392b; }
+.note-markdown code { padding: .1em .3em; border-radius: 3px; background: color-mix(in srgb, currentColor 8%, transparent); font-family: monospace; font-size: .92em; }
 .btn {
   padding: 6px 14px; border-radius: 7px; cursor: pointer;
   border: 1px solid rgba(255, 255, 255, .14);
@@ -1070,9 +1081,9 @@ body.narrow-margin .epub-page { inset: 3%; }
 .mark-note {
   margin-top: 5px;
   padding-left: 8px;
-  border-left: 2px solid rgba(0, 0, 0, .18);
+  border-left: 2px solid color-mix(in srgb, var(--sheet-fg, #14161a) 24%, transparent);
   font-size: 13px;
-  color: var(--sheet-sub, #3f3f3f);
+  color: color-mix(in srgb, var(--sheet-fg, #14161a) 50%, var(--sheet-sub, #6b6b6b));
 }
 .mark-sub { margin-top: 4px; font-size: 13px; color: var(--sheet-sub, #6b6b6b); }
 .mark-time { margin-top: 2px; font-size: 12px; color: var(--sheet-time, #8d8d8d); font-variant-numeric: tabular-nums; }

@@ -10,6 +10,8 @@ type AiTasks = Arc<Mutex<HashMap<String, tauri::async_runtime::JoinHandle<()>>>>
 struct AiReply {
     content: Option<String>,
     error: Option<String>,
+    chunk: Option<Vec<u8>>,
+    done: bool,
 }
 
 // 桌面请求由本地 HTTP 客户端发送，避免 WebView 的跨域限制。
@@ -35,14 +37,14 @@ fn start_ai_request(
     let cleanup = registry.clone();
     let task_id = id.clone();
     let task = tauri::async_runtime::spawn(async move {
-        let response: Result<String, String> = async {
+        let response: Result<Option<String>, String> = async {
             let client = reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(120))
                 .redirect(reqwest::redirect::Policy::none())
                 .build().map_err(|_| "无法初始化 HTTP 客户端".to_string())?;
             let mut request = client.post(url).json(&body);
             if !key.trim().is_empty() { request = request.bearer_auth(key.trim()); }
-            let response = request.send().await.map_err(|e| {
+            let mut response = request.send().await.map_err(|e| {
                 if e.is_timeout() { "AI 请求超时，请重试".to_string() }
                 else { "连接失败，请检查接口地址和网络".to_string() }
             })?;
@@ -50,14 +52,30 @@ fn start_ai_request(
             if !status.is_success() {
                 return Err(format!("HTTP {}：请检查接口地址、模型、Key 或额度", status.as_u16()));
             }
+            if body["stream"].as_bool() == Some(true) && response.headers()
+                .get(reqwest::header::CONTENT_TYPE).and_then(|v| v.to_str().ok())
+                .is_some_and(|v| v.contains("text/event-stream")) {
+                let mut total = 0usize;
+                while let Some(chunk) = response.chunk().await.map_err(|e| {
+                    if e.is_timeout() { "AI 请求超时，请重试".to_string() }
+                    else { "AI 输出中断，请检查网络后重试".to_string() }
+                })? {
+                    total += chunk.len();
+                    // 2 MB 兜底：接口异常返回巨型流时不至于把内存吃满
+                    if total > 2 * 1024 * 1024 { return Err("AI 输出过长，已停止".to_string()); }
+                    result.send(AiReply { content: None, error: None, chunk: Some(chunk.to_vec()), done: false })
+                        .map_err(|_| "AI 窗口已关闭".to_string())?;
+                }
+                return Ok(None);
+            }
             let data: serde_json::Value = response.json().await.map_err(|_| "接口返回的内容不是 JSON".to_string())?;
             data["choices"][0]["message"]["content"].as_str()
-                .filter(|s| !s.trim().is_empty()).map(str::to_string)
+                .filter(|s| !s.trim().is_empty()).map(|s| Some(s.to_string()))
                 .ok_or_else(|| "接口没有返回正文，请检查模型是否支持对话".to_string())
         }.await;
         let reply = match response {
-            Ok(content) => AiReply { content: Some(content), error: None },
-            Err(error) => AiReply { content: None, error: Some(error) },
+            Ok(content) => AiReply { content, error: None, chunk: None, done: true },
+            Err(error) => AiReply { content: None, error: Some(error), chunk: None, done: true },
         };
         let _ = result.send(reply);
         if let Ok(mut map) = cleanup.lock() { map.remove(&task_id); }

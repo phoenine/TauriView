@@ -1,4 +1,5 @@
 import "./styles.css";
+import { renderNoteMarkdown } from "./note-markdown";
 import { initDictionarySettings, refreshDictionarySettings } from "./dictionary/settings";
 import { loadAiConfig, saveAiConfig, requestReadingAi } from "./ai/client";
 import { isTauri } from "./platform";
@@ -870,7 +871,12 @@ async function renderAnnView(): Promise<void> {
         note.className = "ann-note";
         const label = document.createElement("b");
         label.textContent = "Note：";
-        note.append(label, document.createTextNode(a.note.trim()));
+        // 注意：这里不能用 content 命名——外层 .ann-content 也叫 content，
+        // 内层同名变量会遮蔽它，content.appendChild(note) 就变成把 note 塞进自己的子孙节点，
+        // 直接抛 HierarchyRequestError，整页批注渲染中断。
+        const md = document.createElement("div");
+        renderNoteMarkdown(md, a.note.trim());
+        note.append(label, md);
         content.appendChild(note);
       }
 

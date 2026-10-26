@@ -565,7 +565,8 @@
     <!-- 笔记编辑框 -->
     <div id="noteBox" class="note-box" hidden>
       <div class="note-quote" id="noteQuote"></div>
-      <textarea id="noteInput" placeholder="写点什么…"></textarea>
+      <textarea id="noteInput" placeholder="写点什么…" aria-label="笔记内容" aria-describedby="noteMarkdownHint"></textarea>
+      <div id="noteMarkdownHint" class="note-markdown-hint">支持 Markdown：**加粗**、*斜体*、- 无序列表、1. 有序列表</div>
       <div class="note-actions">
         <button id="noteDelete" class="btn danger">删除</button>
         <span class="spacer"></span>
