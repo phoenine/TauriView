@@ -15,3 +15,11 @@ __pycache__/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# 本地私有词库（EuDic 转换，未核实授权，只在本地打包使用）
+resources/dictionaries/modern-chinese/
+resources/dictionaries/advanced-idioms/
+resources/dictionaries/super-xinhua/
+docs/eudic-conversion.md
+scripts/convert-eudic.py
+tests/eudic-conversion.test.py

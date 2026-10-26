@@ -59,6 +59,9 @@ const server = spawn(process.execPath, ["--input-type=module", "-e", "import {cr
     await expect(page.locator("#dictionaryAttribution")).toContainText("成语词典");
     await expect(page.locator("#dictionaryPronunciation")).toContainText("huà shé tiān zú");
     await page.locator("#dictionaryBox").screenshot({ path: path.join(output, "idiom.png") });
+    await expect(page.locator('#dictionaryDetails')).toBeHidden();
+    await expect(page.locator('#dictionaryBody')).not.toContainText('【出处】');
+    await expect(page.locator('#dictionaryBody')).not.toContainText('【示例】');
     await lookup("went");
     await expect(page.locator("#dictionarySource option").first()).toContainText("· go ·");
     await page.locator("#dictionaryBox").screenshot({ path: path.join(output, "english.png") });
@@ -72,7 +75,7 @@ const server = spawn(process.execPath, ["--input-type=module", "-e", "import {cr
     await page.locator("#dictionarySettings").click();
     await expect(page.locator('#settingsView .sp-pane[data-pane="dictionary"]')).toBeVisible();
     await expect(page.locator("#dictionaryPacks .sp-row")).toHaveCount(3);
-    await expect(page.locator("#dictionaryPacks")).toContainText("汉语词典");
+    await expect(page.locator("#dictionaryPacks")).toContainText(/现代汉语词典|汉语词典/);
     await expect(page.locator("#dictionaryPacks")).toContainText("成语词典");
     await expect(page.locator("#dictionaryPacks")).not.toContainText("教育部");
     const toggle = page.locator('#dictionaryPacks button[aria-label="停用ECDICT 常用英汉词典"]');

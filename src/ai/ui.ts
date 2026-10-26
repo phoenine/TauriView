@@ -1,5 +1,6 @@
 import { buildReadingMessages, type ChatMessage, type ReadingAnchor } from "./context";
 import { loadAiConfig, requestReadingAi } from "./client";
+import { renderNoteMarkdown } from "../note-markdown";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const box = $("aiBox"), body = $("aiBody");
@@ -15,7 +16,7 @@ let version = 0;
 let saving = false;
 const savedAnswers = new Set<string>();
 let saveNote: ((anchor: ReadingAnchor, answer: string) => Promise<void>) | null = null;
-const EXPLAIN = "先讲这句话的本意，再结合上下文讲它在这里的含义、承接了什么、作者想达到什么效果；术语用通俗语言说明，不要复述原文。";
+const EXPLAIN = "结合划线附近的前后文，直接解释这一处想表达什么，帮我读懂后继续阅读。术语用通俗的话说，简洁说明即可。";
 
 function busy(): void {
   box.setAttribute("aria-busy", String(!!request));
@@ -28,15 +29,7 @@ function renderAnswer(text: string): void {
   // 用户本来就在底部（或内容还没撑满）时跟随新内容，否则原地不动
   const atBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 24;
   body.className = "ai-body";
-  body.replaceChildren();
-  // 只支持重点加粗，不把模型输出作为 HTML 执行。
-  for (const part of text.split(/(\*\*[^*\n]+\*\*)/g)) {
-    if (part.startsWith("**") && part.endsWith("**")) {
-      const strong = document.createElement("strong");
-      strong.textContent = part.slice(2, -2);
-      body.appendChild(strong);
-    } else body.appendChild(document.createTextNode(part));
-  }
+  renderNoteMarkdown(body, text);
   body.scrollTop = atBottom ? body.scrollHeight : scrollTop;
 }
 function cancel(): void {
@@ -76,10 +69,9 @@ async function ask(text: string): Promise<void> {
   body.scrollTop = 0;
   busy();
   try {
-    const messages = buildReadingMessages(current, "nearby", history, text);
-    // max_tokens 是「输出」预算，要给足空间把上下文讲清楚；
-    // maxChars 只是防跑飞的兜底，正常情况下不会触发
-    const limits = text === EXPLAIN ? { maxTokens: 700, maxChars: 900 } : { maxTokens: 600, maxChars: 800 };
+    const messages = buildReadingMessages(current, "nearby", history, text, text === EXPLAIN ? "explain" : "example");
+    // 简洁程度由提示词控制，预算留出完整收尾的空间，不在客户端按字数截断。
+    const limits = { maxTokens: 1600 };
     const output = await requestReadingAi(loadAiConfig(), messages, controller.signal, (partial) => {
       if (version !== token || current !== anchor || controller.signal.aborted) return;
       streamed = partial;
@@ -98,7 +90,6 @@ async function ask(text: string): Promise<void> {
       warn.className = "ai-partial-warn";
       warn.textContent = `（输出中断：${reason}）`;
       body.appendChild(warn);
-      answer = streamed;
     } else {
       body.className = "ai-body error";
       body.textContent = `理解失败：${reason}`;

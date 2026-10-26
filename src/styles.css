@@ -1332,6 +1332,10 @@ body.narrow-margin .epub-page { inset: 3%; }
 .ai-body { min-height: 0; overflow-y: auto; overflow-wrap: anywhere; margin: 14px 0 18px; font-size: 14.5px; line-height: 1.75; white-space: pre-wrap; }
 .ai-body.loading { color: var(--sheet-sub, #6b6b6b); }
 .ai-body.error { color: #c0392b; }
+.ai-body.note-markdown { white-space: normal; }
+.ai-body.note-markdown p { margin: 0 0 .75em; }
+.ai-body.note-markdown > :last-child { margin-bottom: 0; }
+.ai-partial-warn { margin-top: 10px; font-size: 12px; color: var(--sheet-sub, #6b6b6b); }
 .ai-foot { display: flex; flex-shrink: 0; flex-wrap: wrap; gap: 8px; }
 .ai-btn {
   padding: 8px 15px; border-radius: 999px;

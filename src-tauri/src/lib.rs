@@ -12,6 +12,8 @@ struct AiReply {
     error: Option<String>,
     chunk: Option<Vec<u8>>,
     done: bool,
+    #[serde(rename = "finishReason")]
+    finish_reason: Option<String>,
 }
 
 // 桌面请求由本地 HTTP 客户端发送，避免 WebView 的跨域限制。
@@ -37,7 +39,7 @@ fn start_ai_request(
     let cleanup = registry.clone();
     let task_id = id.clone();
     let task = tauri::async_runtime::spawn(async move {
-        let response: Result<Option<String>, String> = async {
+        let response: Result<(Option<String>, Option<String>), String> = async {
             let client = reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(120))
                 .redirect(reqwest::redirect::Policy::none())
@@ -63,19 +65,19 @@ fn start_ai_request(
                     total += chunk.len();
                     // 2 MB 兜底：接口异常返回巨型流时不至于把内存吃满
                     if total > 2 * 1024 * 1024 { return Err("AI 输出过长，已停止".to_string()); }
-                    result.send(AiReply { content: None, error: None, chunk: Some(chunk.to_vec()), done: false })
+                    result.send(AiReply { content: None, error: None, chunk: Some(chunk.to_vec()), done: false, finish_reason: None })
                         .map_err(|_| "AI 窗口已关闭".to_string())?;
                 }
-                return Ok(None);
+                return Ok((None, None));
             }
             let data: serde_json::Value = response.json().await.map_err(|_| "接口返回的内容不是 JSON".to_string())?;
             data["choices"][0]["message"]["content"].as_str()
-                .filter(|s| !s.trim().is_empty()).map(|s| Some(s.to_string()))
+                .filter(|s| !s.trim().is_empty()).map(|s| (Some(s.to_string()), data["choices"][0]["finish_reason"].as_str().map(str::to_string)))
                 .ok_or_else(|| "接口没有返回正文，请检查模型是否支持对话".to_string())
         }.await;
         let reply = match response {
-            Ok(content) => AiReply { content, error: None, chunk: None, done: true },
-            Err(error) => AiReply { content: None, error: Some(error), chunk: None, done: true },
+            Ok((content, finish_reason)) => AiReply { content, error: None, chunk: None, done: true, finish_reason },
+            Err(error) => AiReply { content: None, error: Some(error), chunk: None, done: true, finish_reason: None },
         };
         let _ = result.send(reply);
         if let Ok(mut map) = cleanup.lock() { map.remove(&task_id); }

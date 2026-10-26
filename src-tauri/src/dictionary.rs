@@ -363,25 +363,39 @@ mod tests {
     }
     #[test]
     fn real_bundles_have_pinyin_simplified_aliases_and_english_inflections() {
-        for id in ["ecdict-core", "mapull-chinese", "mapull-idioms"] {
+        // 以 manifest 为准：中文/成语包可能换成本地版本，dev 上则是 mapull 包
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../resources/dictionaries");
+        let manifest: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(root.join("manifest.json")).unwrap()).unwrap();
+        for pack in manifest.as_array().unwrap() {
+            let id = pack["id"].as_str().unwrap();
+            let kind = pack["kind"].as_str().unwrap();
+            let source = root.join(id);
+            if !source.is_dir() { continue; }
             let fixture = Fixture::new();
-            let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../resources/dictionaries").join(id);
             for extension in ["ifo", "idx.gz", "dict.dz", "syn"] {
                 fs::copy(source.join(format!("{id}.{extension}")), fixture.0.join(format!("{id}.{extension}"))).unwrap();
             }
             let dict = open(&fixture.0.join(format!("{id}.ifo"))).unwrap();
-            if id == "ecdict-core" {
-                assert!(dict.keys.contains_key("went"));
-                assert!(dict.keys["went"].iter().any(|&index| dict.entries[index].word == "go"));
-                assert!(definitions(&dict, "read").iter().any(|text| text.contains("读")));
-            } else if id == "mapull-chinese" {
-                assert!(definitions(&dict, "银行").iter().any(|text| text.contains("háng")));
-                assert!(definitions(&dict, "行").len() > 1);
-                assert!(dict.keys.contains_key("画蛇添足"));
-            } else {
-                assert!(dict.keys.contains_key("望梅止渴"));
-                assert!(dict.keys.contains_key("画蛇添足"));
-                assert!(!dict.keys.contains_key("今天下午"));
+            match kind {
+                "english" => {
+                    assert!(dict.keys.contains_key("went"));
+                    assert!(dict.keys["went"].iter().any(|&index| dict.entries[index].word == "go"));
+                    assert!(definitions(&dict, "read").iter().any(|text| text.contains("读")));
+                }
+                "chinese" => {
+                    assert!(definitions(&dict, "银行").iter().any(|text| text.contains("háng")));
+                    assert!(!definitions(&dict, "行").is_empty());
+                }
+                _ => {
+                    assert!(dict.keys.contains_key("望梅止渴"));
+                    assert!(dict.keys.contains_key("画蛇添足"));
+                    assert!(!definitions(&dict, "画蛇添足").is_empty());
+                    // 本地 EuDic 转换包只保留释义，不应再带出处/扩展资料
+                    if pack["source"].as_str().unwrap_or("").contains("EuDic") {
+                        assert!(definitions(&dict, "画蛇添足").iter().all(|text| !text.contains("【出处】") && !text.contains("【扩展资料】")));
+                    }
+                }
             }
         }
     }

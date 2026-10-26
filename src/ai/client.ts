@@ -29,12 +29,17 @@ export function saveAiConfig(config: AiConfig): boolean {
   } catch { return false; }
 }
 
-/** 输出预算：maxTokens 让服务端提前收口，maxChars 在客户端到量就停，避免满屏。 */
-export interface AiLimits { maxTokens?: number; maxChars?: number }
+/** 服务端输出预算；达到上限视为未完成，不能静默裁掉回答。 */
+export interface AiLimits { maxTokens?: number }
+
+function checkFinishReason(reason?: string | null): void {
+  if (reason === "length") throw new Error("回答达到输出上限，内容尚未完整，请重试。");
+  if (reason && reason !== "stop") throw new Error("AI 输出未正常完成，请重试。");
+}
 
 /** SSE frames may span network chunks, including in the middle of UTF-8 characters. */
-function aiStream(onUpdate: (text: string) => void, limits?: AiLimits) {
-  let pending = "", content = "", finished = false, done = false, limited = false;
+function aiStream(onUpdate: (text: string) => void) {
+  let pending = "", content = "", finishReason: string | null = null, done = false;
   const frame = (event: string) => {
     if (done) return;
     const data = event.split(/\r\n|\n|\r/).filter(line => line.startsWith("data:"))
@@ -48,10 +53,8 @@ function aiStream(onUpdate: (text: string) => void, limits?: AiLimits) {
     const delta = choice?.delta?.content;
     if (typeof delta === "string" && delta) {
       content += delta; onUpdate(content);
-      // 到量就停：不再等模型把话说完，省 token 也不让面板无限长
-      if (limits?.maxChars && content.length >= limits.maxChars) { limited = true; done = true; }
     }
-    if (choice?.finish_reason != null) finished = true;
+    if (choice?.finish_reason != null) finishReason = choice.finish_reason;
   };
   return {
     push(text: string) {
@@ -65,12 +68,9 @@ function aiStream(onUpdate: (text: string) => void, limits?: AiLimits) {
     get done() { return done; },
     finish() {
       if (pending.trim()) frame(pending);
-      if (!done && !finished) throw new Error("AI 输出中断，请重试。");
-      if (!limited) return content;
-      // 截断在句子边界上，别留半句话
-      let cut = Math.max(content.lastIndexOf("。"), content.lastIndexOf("！"), content.lastIndexOf("？"), content.lastIndexOf("\n"));
-      if (cut < content.length * 0.55) cut = content.length - 1;
-      return content.slice(0, cut + 1).trimEnd();
+      checkFinishReason(finishReason);
+      if (!done && !finishReason) throw new Error("AI 输出中断，请重试。");
+      return content;
     },
   };
 }
@@ -85,8 +85,8 @@ export async function requestReadingAi(config: AiConfig, messages: ChatMessage[]
     signal.throwIfAborted();
     const id = crypto.randomUUID();
     content = await new Promise<string>((resolve, reject) => {
-      const result = new Channel<{ content?: string; error?: string; chunk?: number[]; done?: boolean }>();
-      const stream = aiStream(text => onUpdate?.(text), limits);
+      const result = new Channel<{ content?: string; error?: string; chunk?: number[]; done?: boolean; finishReason?: string }>();
+      const stream = aiStream(text => onUpdate?.(text));
       const decoder = new TextDecoder();
       let started = false, settled = false;
       const cleanup = () => signal.removeEventListener("abort", abort);
@@ -101,7 +101,7 @@ export async function requestReadingAi(config: AiConfig, messages: ChatMessage[]
           if (message.error) throw new Error(message.error);
           if (message.chunk) {
             stream.push(decoder.decode(new Uint8Array(message.chunk), { stream: true }));
-            // 到预算了：告诉 Rust 停掉上游，用已有内容收尾
+            // 收到 SSE 的结束标记后释放上游连接。
             if (stream.done) {
               settled = true; cleanup();
               void invoke("cancel_ai_request", { id }).catch(() => {});
@@ -111,7 +111,7 @@ export async function requestReadingAi(config: AiConfig, messages: ChatMessage[]
           }
           cleanup();
           settled = true;
-          if (typeof message.content === "string") { onUpdate?.(message.content); resolve(message.content); }
+          if (typeof message.content === "string") { onUpdate?.(message.content); checkFinishReason(message.finishReason); resolve(message.content); }
           else if (message.done) { stream.push(decoder.decode()); resolve(stream.finish()); }
           else resolve("");
         } catch (error) {
@@ -142,7 +142,7 @@ export async function requestReadingAi(config: AiConfig, messages: ChatMessage[]
       if (onUpdate && response.headers?.get("content-type")?.includes("text/event-stream")) {
         if (!response.body) throw new Error("AI 接口没有返回输出流。");
         const reader = response.body.getReader(), decoder = new TextDecoder();
-        const stream = aiStream(onUpdate, limits);
+        const stream = aiStream(onUpdate);
         try {
           while (!stream.done) {
             const chunk = await reader.read();
@@ -156,6 +156,7 @@ export async function requestReadingAi(config: AiConfig, messages: ChatMessage[]
         const data = await response.json();
         content = data?.choices?.[0]?.message?.content;
         if (typeof content === "string") onUpdate?.(content);
+        checkFinishReason(data?.choices?.[0]?.finish_reason);
       }
     } catch (error) {
       if (controller.signal.aborted && !signal.aborted) throw new Error("AI 请求超时，请重试。");

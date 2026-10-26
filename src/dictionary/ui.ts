@@ -35,7 +35,7 @@ function render(): void {
   sources.value = String(selected);
   sources.disabled = saving;
   $("dictionaryTerm").textContent = anchor ? normalizeQuery(anchor.text) : "词典";
-  pronunciation.textContent = entry ? `${entry.word !== normalizeQuery(anchor!.text) ? entry.word + " · " : ""}${entry.pronunciation}` : "";
+  pronunciation.textContent = entry ? `${entry.word !== normalizeQuery(anchor!.text) ? entry.word + (entry.pronunciation ? " · " : "") : ""}${entry.pronunciation}` : "";
   pronunciation.hidden = !pronunciation.textContent;
   body.className = "ai-body dictionary-body";
   const [meaning, extra] = (entry?.definition ?? "").split("\n\n【扩展资料】\n");
