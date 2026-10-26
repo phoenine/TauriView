@@ -15,7 +15,7 @@ let version = 0;
 let saving = false;
 const savedAnswers = new Set<string>();
 let saveNote: ((anchor: ReadingAnchor, answer: string) => Promise<void>) | null = null;
-const EXPLAIN = "结合上下文，用一两段话直接解释选区在这里的含义；术语用通俗语言说明，不需要标题或重复原文。";
+const EXPLAIN = "先讲这句话的本意，再结合上下文讲它在这里的含义、承接了什么、作者想达到什么效果；术语用通俗语言说明，不要复述原文。";
 
 function busy(): void {
   box.setAttribute("aria-busy", String(!!request));
@@ -77,8 +77,9 @@ async function ask(text: string): Promise<void> {
   busy();
   try {
     const messages = buildReadingMessages(current, "nearby", history, text);
-    // 短答案就够用：理解给 260 字预算，举例给 360 字
-    const limits = text === EXPLAIN ? { maxTokens: 320, maxChars: 260 } : { maxTokens: 420, maxChars: 360 };
+    // max_tokens 是「输出」预算，要给足空间把上下文讲清楚；
+    // maxChars 只是防跑飞的兜底，正常情况下不会触发
+    const limits = text === EXPLAIN ? { maxTokens: 700, maxChars: 900 } : { maxTokens: 600, maxChars: 800 };
     const output = await requestReadingAi(loadAiConfig(), messages, controller.signal, (partial) => {
       if (version !== token || current !== anchor || controller.signal.aborted) return;
       streamed = partial;
