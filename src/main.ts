@@ -1,4 +1,6 @@
 import "./styles.css";
+import { exportToObsidian } from "./obsidian-export";
+import { initObsidianSettings } from "./obsidian-settings";
 import { renderNoteMarkdown } from "./note-markdown";
 import { initDictionarySettings, refreshDictionarySettings } from "./dictionary/settings";
 import { loadAiConfig, saveAiConfig, requestReadingAi } from "./ai/client";
@@ -665,6 +667,35 @@ const annBookLabel = $<HTMLElement>("#annBookLabel");
 const annKindBtn = $<HTMLButtonElement>("#annKindBtn");
 const annKindLabel = $<HTMLElement>("#annKindLabel");
 const annFavOnly = $<HTMLInputElement>("#annFavOnly");
+const annExport = $<HTMLButtonElement>("#annExport");
+
+annExport.addEventListener("click", async () => {
+  if (annExport.disabled) return;
+  annExport.disabled = true;
+  annExport.setAttribute("aria-busy", "true");
+  try {
+    const message = await exportToObsidian(await collectAnnGroups(), chapterLabelOf);
+    if (message) showExportFeedback(message, false);
+  } catch (error) {
+    showExportFeedback(error instanceof Error ? error.message : String(error), true);
+  } finally {
+    annExport.disabled = false;
+    annExport.removeAttribute("aria-busy");
+  }
+});
+
+function showExportFeedback(message: string, error: boolean): void {
+  const box = $<HTMLElement>("#annExportStatus");
+  box.hidden = false;
+  box.classList.toggle("is-error", error);
+  $("#annExportSettings").hidden = !error;
+  box.querySelector<HTMLElement>(".export-feedback-icon")!.textContent = error ? "!" : "✓";
+  $<HTMLElement>("#annExportStatusTitle").textContent = error ? "导出未完成" : "导出完成";
+  $<HTMLElement>("#annExportStatusText").textContent = message;
+}
+
+$("#annExportDismiss").addEventListener("click", () => { $("#annExportStatus").hidden = true; });
+$("#annExportSettings").addEventListener("click", () => showSettings("export"));
 
 let annFilterBook = "";
 let annFilterKind: "all" | "hl" | "note" = "all";
@@ -921,6 +952,7 @@ async function renderAnnView(): Promise<void> {
 }
 
 function showAnnView(): void {
+  topline.hidden = false;
   shelfView = "home";
   $<HTMLElement>("#railHome").classList.remove("active");
   $<HTMLElement>("#railBooks").classList.remove("active");
@@ -2574,6 +2606,7 @@ function opt(value: string, label: string): HTMLOptionElement {
 }
 
 let settingsPageReady = false;
+initObsidianSettings();
 
 async function buildSettingsPage(): Promise<void> {
   if (settingsPageReady) return;

@@ -67,6 +67,12 @@
         <header id="topbar">
           <h1 id="viewTitle">最近阅读</h1>
           <div class="topbar-actions">
+            <div id="annExportAction" class="ann-export-action">
+              <button class="tb-btn" id="annExport" type="button" aria-label="导出批注到 Obsidian" aria-describedby="annExportTip">
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3v12m-4-4 4 4 4-4M4 15v5h16v-5"/></svg>
+              </button>
+              <span id="annExportTip" class="export-tooltip" role="tooltip">导出批注<span>保存当前筛选到 Obsidian</span></span>
+            </div>
             <div class="lib-search" id="libSearchWrap" hidden>
               <svg viewBox="0 0 24 24"><path d="M10 3a7 7 0 1 0 4.2 12.6l4.1 4.1 1.4-1.4-4.1-4.1A7 7 0 0 0 10 3zm0 2a5 5 0 1 1 0 10 5 5 0 0 1 0-10z"/></svg>
               <input id="libSearchInput" placeholder="搜索书名、作者、分组" autocomplete="off" />
@@ -210,6 +216,9 @@
         <button class="sn-item" data-pane="general" type="button">
           <svg viewBox="0 0 24 24"><path d="M4 6h16v2H4zm0 5h16v2H4zm0 5h16v2H4z"/></svg>常规
         </button>
+        <button class="sn-item" data-pane="export" type="button">
+          <svg viewBox="0 0 24 24"><path d="M11 3h2v10l3-3 1.4 1.4L12 17l-5.4-5.6L8 10l3 3zM4 15h2v4h12v-4h2v6H4z"/></svg>导出
+        </button>
         <button class="sn-item" data-pane="ai" type="button">
           <svg viewBox="0 0 24 24"><path d="M12 3l1.6 4.6L18 9.2l-4.4 1.6L12 15.4l-1.6-4.6L6 9.2l4.4-1.6zM18.5 14l.9 2.4 2.4.9-2.4.9-.9 2.4-.9-2.4-2.4-.9 2.4-.9z"/></svg>AI 理解
         </button>
@@ -334,6 +343,27 @@
           </div>
         </div>
 
+        <div class="sp-pane" data-pane="export" hidden>
+          <h3 class="sp-heading">导出批注</h3>
+          <p class="sp-note">将阅读中的划线与想法，保存为 Obsidian 读书卡片。</p>
+          <div class="export-settings-card">
+            <label class="sp-label" for="setObsidianPath">Obsidian 仓库文件夹</label>
+            <p class="sp-desc">选择仓库根目录。设置一次后，点击批注页右上角的导出按钮即可保存。</p>
+            <div class="export-path-field">
+              <input id="setObsidianPath" class="sp-input" placeholder="选择或输入仓库文件夹路径" autocomplete="off" spellcheck="false" aria-describedby="setObsidianStatus" />
+              <button id="setObsidianBrowse" class="sp-btn" type="button">选择文件夹</button>
+              <button id="setObsidianSave" class="sp-btn export-save" type="button">保存</button>
+            </div>
+            <p id="setObsidianStatus" class="export-settings-status" role="status">默认使用 Reading 仓库，可随时更改。</p>
+          </div>
+          <div class="export-template-info">
+            <h4>沿用你的笔记模板</h4>
+            <div><span>书籍页</span><code>Template/Book.md</code><span>→ Books</span></div>
+            <div><span>读书卡片</span><code>Template/Flashcard.md</code><span>→ 读书卡片</span></div>
+            <p>保留模板正文与自定义属性，自动填入原文和批注。已有卡片会跳过，保留你在 Obsidian 中的修改。</p>
+          </div>
+        </div>
+
         <div class="sp-pane" data-pane="ai" hidden>
           <h3 class="sp-heading">AI 理解</h3>
           <p class="sp-note">用于阅读时的「AI 理解」「举个栗子」和批注补充。任何 OpenAI 兼容的对话接口都能用；本机模型（如 Ollama）把地址填成 http://localhost:11434/v1，Key 可留空。</p>
@@ -422,6 +452,12 @@
     </section>
 
     <section id="annView" hidden>
+      <div id="annExportStatus" class="export-feedback" role="status" hidden>
+        <div class="export-feedback-icon" aria-hidden="true">✓</div>
+        <div class="export-feedback-copy"><strong id="annExportStatusTitle"></strong><p id="annExportStatusText"></p></div>
+        <button id="annExportSettings" class="sp-btn" type="button">导出设置</button>
+        <button id="annExportDismiss" class="export-feedback-close" type="button" aria-label="关闭导出提示">×</button>
+      </div>
       <div class="ann-toolbar">
         <button class="ann-pick" id="annBookBtn" type="button">
           <span id="annBookLabel">全部</span>
@@ -544,7 +580,7 @@
     </aside>
 
     <aside id="notePreview" class="note-preview" aria-label="批注预览" hidden>
-      <div class="note-preview-head"><strong>批注</strong><button id="notePreviewEdit" class="btn" type="button">编辑</button></div>
+      <div class="note-preview-head"><strong>批注</strong></div>
       <div id="notePreviewText" class="note-preview-text"></div>
     </aside>
 

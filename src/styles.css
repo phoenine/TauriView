@@ -215,6 +215,20 @@ body.reading .settings-pop { left: auto; bottom: auto; }
 
 .topbar-actions { display: flex; gap: 10px; margin-left: auto; }
 
+.ann-export-action { display: none; position: relative; }
+#main:has(> #annView:not([hidden])) .ann-export-action { display: block; }
+#annExport { position: relative; border: 1px solid rgba(255,255,255,.1); background: rgba(255,255,255,.035); }
+#annExport svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+#annExport:hover { background: rgba(255,255,255,.09); border-color: rgba(255,255,255,.2); }
+#annExport:focus-visible { outline: 2px solid var(--accent-soft); outline-offset: 3px; }
+#annExport:disabled { opacity: .6; cursor: wait; }
+#annExport[aria-busy="true"] svg { opacity: 0; }
+#annExport[aria-busy="true"]::after { content: ""; position: absolute; inset: 8px; border: 1.5px solid rgba(255,255,255,.2); border-top-color: currentColor; border-radius: 50%; animation: export-spin .8s linear infinite; }
+@keyframes export-spin { to { transform: rotate(360deg); } }
+.export-tooltip { position: absolute; right: 0; top: calc(100% + 10px); width: max-content; padding: 9px 12px; border: 1px solid rgba(255,255,255,.1); border-radius: 8px; background: #252b38; color: #eef1f6; box-shadow: 0 6px 20px rgba(0,0,0,.2); font-size: 12px; line-height: 1.5; z-index: 100; pointer-events: none; visibility: hidden; opacity: 0; transform: translateY(-3px); transition: opacity .14s, transform .14s, visibility .14s; }
+.export-tooltip span { display: block; margin-top: 2px; color: #a8b3c4; font-size: 11px; }
+.ann-export-action:hover .export-tooltip, .ann-export-action:focus-within .export-tooltip { visibility: visible; opacity: 1; transform: translateY(0); transition-delay: .25s; }
+
 .btn {
   display: inline-flex;
   align-items: center;
@@ -702,9 +716,8 @@ body.narrow-margin .epub-page { inset: 3%; }
   box-shadow: var(--sheet-shadow, 0 12px 32px rgba(39,32,20,.16));
   color-scheme: var(--sheet-scheme, light);
 }
-.note-preview-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 8px; }
+.note-preview-head { margin-bottom: 8px; }
 .note-preview-head strong { font-size: 12px; color: var(--sheet-sub, #6b6b6b); }
-.note-preview-head .btn { padding: 3px 9px; font-size: 12px; }
 .note-preview-text { max-height: min(260px, calc(100vh - 120px)); overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; line-height: 1.7; }
 .hl-dot {
   width: 20px; height: 20px; padding: 0;
@@ -1863,6 +1876,31 @@ body.narrow-margin .epub-page { inset: 3%; }
 .sp-input:focus { outline: 1px solid var(--accent); }
 
 .sp-note { margin: 0 0 20px; font-size: 13px; line-height: 1.7; color: #9aa4b4; }
+
+.export-settings-card { max-width: 850px; padding: 24px; border: 1px solid rgba(255,255,255,.09); border-radius: 12px; background: rgba(255,255,255,.025); }
+.export-settings-card .sp-desc { margin: 8px 0 18px; }
+.export-path-field { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.export-path-field .sp-input { flex: 1 1 260px; min-width: 180px; width: auto; font-size: 13px; }
+.export-path-field .sp-btn { flex-shrink: 0; }
+.sp-btn.export-save { background: var(--accent); border-color: transparent; color: #062b29; font-weight: 600; }
+.sp-btn.export-save:hover { background: var(--accent-soft); }
+.export-settings-status { margin: 12px 0 0; color: #9aa4b4; font-size: 12px; min-height: 20px; }
+.export-settings-status.is-error { color: #ffc0b5; }
+.export-template-info { max-width: 850px; padding: 24px 2px; }
+.export-template-info h4 { margin: 0 0 14px; font-size: 14px; font-weight: 500; color: #d4dce8; }
+.export-template-info > div { display: flex; flex-wrap: wrap; gap: 12px; margin: 8px 0; font-size: 12px; color: #a8b3c4; align-items: center; }
+.export-template-info > div > span:first-child { width: 62px; }
+.export-template-info code { width: 195px; font-size: 12px; color: #cfd6e2; }
+.export-template-info p { margin: 18px 0 0; font-size: 12px; line-height: 1.8; color: #9aa4b4; }
+.export-feedback { display: flex; gap: 12px; align-items: center; padding: 16px; margin: 12px 0 20px; border: 1px solid rgba(95,216,189,.25); border-radius: 10px; background: rgba(17,85,80,.18); }
+.export-feedback-icon { display: grid; place-items: center; flex-shrink: 0; width: 28px; height: 28px; border-radius: 50%; background: rgba(81,206,175,.14); color: #8fe0cb; font-size: 16px; }
+.export-feedback-copy { flex: 1; min-width: 0; }
+.export-feedback-copy strong { font-size: 13px; font-weight: 600; color: #e4efee; }
+.export-feedback-copy p { margin: 4px 0 0; white-space: pre-line; overflow-wrap: anywhere; color: #b8c9ce; font-size: 12px; line-height: 1.6; }
+.export-feedback.is-error { background: rgba(125,63,41,.12); border-color: rgba(226,161,122,.25); }
+.export-feedback.is-error .export-feedback-icon { color: #f6c7ad; background: rgba(226,161,122,.13); }
+.export-feedback-close { border: 0; background: transparent; color: #a8b3c4; font: inherit; font-size: 20px; cursor: pointer; padding: 4px; }
+.export-feedback-close:hover { color: #fff; }
 
 /* 听书沿用阅读浮层的纸色、圆角和工具栏图标。 */
 svg.listen-icon { fill: none; stroke: currentColor; stroke-width: 1.65; stroke-linecap: round; stroke-linejoin: round; }

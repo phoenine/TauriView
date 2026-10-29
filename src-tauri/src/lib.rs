@@ -1,6 +1,7 @@
 use tauri::Manager;
 mod dictionary;
 mod tts;
+mod obsidian;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -214,6 +215,7 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![library_dir, import_book, list_fonts, start_ai_request, cancel_ai_request,
+            obsidian::export_obsidian, obsidian::validate_obsidian_vault,
             dictionary::list_dictionaries, dictionary::lookup_dictionary, dictionary::import_dictionary, dictionary::set_dictionary_enabled,
             tts::tts_request])
         .build(tauri::generate_context!())

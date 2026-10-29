@@ -519,10 +519,6 @@ function wireOnce(): void {
     previewHideTimer = undefined;
   });
   notePreview.addEventListener("focusout", () => window.setTimeout(leavePreview, 0));
-  $("#notePreviewEdit").addEventListener("click", () => {
-    const h = highlights.find((item) => item.id === previewId);
-    if (h) openNote(h);
-  });
   window.addEventListener("resize", hidePreview);
   window.addEventListener("blur", hidePreview);
   document.addEventListener("scroll", (event) => {
