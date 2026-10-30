@@ -7,6 +7,9 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
 
 export interface PdfHandle {
   next(): void;
+  /** 脚注跳转（PDF 暂无，保持可选以便与 EPUB 句柄共用入口） */
+  canGoBack?(): boolean;
+  goBack?(): boolean;
   prev(): void;
   goTo(page: number): void;
   page(): number;

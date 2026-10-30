@@ -137,7 +137,8 @@ async function chineseBook() {
     await expect(page.locator("#notePreview")).toBeVisible();
     await page.locator("#notePreviewText").evaluate((el) => { el.scrollTop = 80; });
     await expect(page.locator("#notePreview")).toBeVisible();
-    await page.locator("#notePreviewEdit").click();
+    await expect(page.locator('#notePreview button')).toHaveCount(0);
+    await page.locator('.tv-note-marker').click();
     await expect(page.locator("#noteBox")).toBeVisible();
     await expect(page.locator("#notePreview")).toBeHidden();
     await expect(page.locator('#noteInput')).toHaveValue(markdownNote);
@@ -170,14 +171,12 @@ async function chineseBook() {
       await expect(page.locator('#notePreview')).toBeVisible();
       const colors = await page.evaluate(() => {
         const card = getComputedStyle(document.getElementById('notePreview'));
-        const button = getComputedStyle(document.getElementById('notePreviewEdit'));
         const rgb = text => text.match(/[\d.]+/g).slice(0, 3).map(Number);
         const luminance = rgb => rgb.map(v => v / 255).map(v => v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4).reduce((sum, v, i) => sum + v * [.2126, .7152, .0722][i], 0);
         const ratio = (fg, bg) => { const a = luminance(rgb(fg)), b = luminance(rgb(bg)); return (Math.max(a, b) + .05) / (Math.min(a, b) + .05); };
-        return { bg: card.backgroundColor, fg: card.color, contrast: ratio(card.color, card.backgroundColor), buttonColor: button.color };
+        return { bg: card.backgroundColor, fg: card.color, contrast: ratio(card.color, card.backgroundColor) };
       });
       backgrounds.push(colors.bg); assert.ok(colors.contrast >= 4.5, `${theme}: preview text contrast`);
-      assert.equal(colors.buttonColor, colors.fg);
       await page.locator('#notePreview').screenshot({ path: path.join(output, `preview-${theme}.png`) });
       await page.locator('.tv-note-marker').click();
       await expect(page.locator('#noteBox')).toBeVisible();

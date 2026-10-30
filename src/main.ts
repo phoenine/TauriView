@@ -1,4 +1,6 @@
 import "./styles.css";
+import { exportToObsidian } from "./obsidian-export";
+import { initObsidianSettings } from "./obsidian-settings";
 import { renderNoteMarkdown } from "./note-markdown";
 import { initDictionarySettings, refreshDictionarySettings } from "./dictionary/settings";
 import { loadAiConfig, saveAiConfig, requestReadingAi } from "./ai/client";
@@ -162,6 +164,9 @@ const viewTitle = $<HTMLElement>("#viewTitle");
 const topline = $<HTMLElement>("#topbar");
 
 const docTitle = $<HTMLElement>("#docTitle");
+const backToText = $<HTMLButtonElement>("#backToText");
+const footnotePop = $<HTMLElement>("#footnotePop");
+const footnoteText = $<HTMLElement>("#footnoteText");
 const viewer = $<HTMLElement>("#viewer");
 const footLeft = $<HTMLElement>("#footLeft");
 const footCenter = $<HTMLElement>("#footCenter");
@@ -665,6 +670,35 @@ const annBookLabel = $<HTMLElement>("#annBookLabel");
 const annKindBtn = $<HTMLButtonElement>("#annKindBtn");
 const annKindLabel = $<HTMLElement>("#annKindLabel");
 const annFavOnly = $<HTMLInputElement>("#annFavOnly");
+const annExport = $<HTMLButtonElement>("#annExport");
+
+annExport.addEventListener("click", async () => {
+  if (annExport.disabled) return;
+  annExport.disabled = true;
+  annExport.setAttribute("aria-busy", "true");
+  try {
+    const message = await exportToObsidian(await collectAnnGroups(), chapterLabelOf);
+    if (message) showExportFeedback(message, false);
+  } catch (error) {
+    showExportFeedback(error instanceof Error ? error.message : String(error), true);
+  } finally {
+    annExport.disabled = false;
+    annExport.removeAttribute("aria-busy");
+  }
+});
+
+function showExportFeedback(message: string, error: boolean): void {
+  const box = $<HTMLElement>("#annExportStatus");
+  box.hidden = false;
+  box.classList.toggle("is-error", error);
+  $("#annExportSettings").hidden = !error;
+  box.querySelector<HTMLElement>(".export-feedback-icon")!.textContent = error ? "!" : "✓";
+  $<HTMLElement>("#annExportStatusTitle").textContent = error ? "导出未完成" : "导出完成";
+  $<HTMLElement>("#annExportStatusText").textContent = message;
+}
+
+$("#annExportDismiss").addEventListener("click", () => { $("#annExportStatus").hidden = true; });
+$("#annExportSettings").addEventListener("click", () => showSettings("export"));
 
 let annFilterBook = "";
 let annFilterKind: "all" | "hl" | "note" = "all";
@@ -921,6 +955,7 @@ async function renderAnnView(): Promise<void> {
 }
 
 function showAnnView(): void {
+  topline.hidden = false;
   shelfView = "home";
   $<HTMLElement>("#railHome").classList.remove("active");
   $<HTMLElement>("#railBooks").classList.remove("active");
@@ -1091,6 +1126,8 @@ function closeReader(): void {
   tocPanel.hidden = true;
   settingsPop.hidden = true;
   moreMenu.hidden = true;
+  backToText.hidden = true;
+  footnotePop.hidden = true;
   readerView.hidden = true;
   document.body.classList.remove("reading");
   if (lastListView === "ann") {
@@ -1171,6 +1208,16 @@ async function openBook(id: string, startCfi?: string): Promise<void> {
         typography: typo,
       transition: prefs.transition,
       singleColumn: prefs.spread === "single",
+      onNavBack: (canBack: boolean) => {
+        if (!active()) return;
+        backToText.hidden = !canBack;
+      },
+      onFootnote: ({ text }: { text: string; href: string }) => {
+        if (!active()) return;
+        footnoteText.textContent = text.length > 800 ? `${text.slice(0, 800)}…` : text;
+        footnoteText.scrollTop = 0;
+        footnotePop.hidden = false;
+      },
         onFirstPaint: () => {
           if (!active()) return;
           (window as any).__paintMs = Math.round(performance.now() - openedAt);
@@ -1520,6 +1567,22 @@ document.addEventListener("keydown", (e) => {
 prevBtn.addEventListener("click", () => handle?.prev());
 nextBtn.addEventListener("click", () => handle?.next());
 backBtn.addEventListener("click", closeReader);
+
+backToText.addEventListener("click", (e) => {
+  e.stopPropagation();
+  if (!handle) return;
+  handle.goBack?.();
+  backToText.hidden = !handle.canGoBack?.();
+});
+
+$<HTMLElement>("#footnoteClose").addEventListener("click", (e) => {
+  e.stopPropagation();
+  footnotePop.hidden = true;
+});
+// 翻页 / 继续阅读时收起脚注浮层
+for (const btn of [nextBtn, prevBtn]) {
+  btn.addEventListener("click", () => { footnotePop.hidden = true; });
+}
 
 window.addEventListener("keydown", (e) => {
   if (readerView.hidden) return;
@@ -2574,6 +2637,7 @@ function opt(value: string, label: string): HTMLOptionElement {
 }
 
 let settingsPageReady = false;
+initObsidianSettings();
 
 async function buildSettingsPage(): Promise<void> {
   if (settingsPageReady) return;
