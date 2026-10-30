@@ -164,6 +164,9 @@ const viewTitle = $<HTMLElement>("#viewTitle");
 const topline = $<HTMLElement>("#topbar");
 
 const docTitle = $<HTMLElement>("#docTitle");
+const backToText = $<HTMLButtonElement>("#backToText");
+const footnotePop = $<HTMLElement>("#footnotePop");
+const footnoteText = $<HTMLElement>("#footnoteText");
 const viewer = $<HTMLElement>("#viewer");
 const footLeft = $<HTMLElement>("#footLeft");
 const footCenter = $<HTMLElement>("#footCenter");
@@ -1123,6 +1126,8 @@ function closeReader(): void {
   tocPanel.hidden = true;
   settingsPop.hidden = true;
   moreMenu.hidden = true;
+  backToText.hidden = true;
+  footnotePop.hidden = true;
   readerView.hidden = true;
   document.body.classList.remove("reading");
   if (lastListView === "ann") {
@@ -1203,6 +1208,16 @@ async function openBook(id: string, startCfi?: string): Promise<void> {
         typography: typo,
       transition: prefs.transition,
       singleColumn: prefs.spread === "single",
+      onNavBack: (canBack: boolean) => {
+        if (!active()) return;
+        backToText.hidden = !canBack;
+      },
+      onFootnote: ({ text }: { text: string; href: string }) => {
+        if (!active()) return;
+        footnoteText.textContent = text.length > 800 ? `${text.slice(0, 800)}…` : text;
+        footnoteText.scrollTop = 0;
+        footnotePop.hidden = false;
+      },
         onFirstPaint: () => {
           if (!active()) return;
           (window as any).__paintMs = Math.round(performance.now() - openedAt);
@@ -1552,6 +1567,22 @@ document.addEventListener("keydown", (e) => {
 prevBtn.addEventListener("click", () => handle?.prev());
 nextBtn.addEventListener("click", () => handle?.next());
 backBtn.addEventListener("click", closeReader);
+
+backToText.addEventListener("click", (e) => {
+  e.stopPropagation();
+  if (!handle) return;
+  handle.goBack?.();
+  backToText.hidden = !handle.canGoBack?.();
+});
+
+$<HTMLElement>("#footnoteClose").addEventListener("click", (e) => {
+  e.stopPropagation();
+  footnotePop.hidden = true;
+});
+// 翻页 / 继续阅读时收起脚注浮层
+for (const btn of [nextBtn, prevBtn]) {
+  btn.addEventListener("click", () => { footnotePop.hidden = true; });
+}
 
 window.addEventListener("keydown", (e) => {
   if (readerView.hidden) return;

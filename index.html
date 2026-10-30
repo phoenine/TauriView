@@ -530,6 +530,18 @@
           </footer>
           <div id="footLine"><i id="progressFill"></i></div>
 
+          <!-- 脚注正文（目标不在 spine 里的注释文件） -->
+          <div id="footnotePop" class="footnote-pop" role="note" hidden>
+            <div id="footnoteText" class="footnote-text"></div>
+            <button id="footnoteClose" class="footnote-close" type="button" title="关闭" aria-label="关闭">✕</button>
+          </div>
+
+          <!-- 读过脚注后回到正文 -->
+          <button id="backToText" class="back-to-text" type="button" hidden>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 5.5 3 12l6.5 6.5 1.4-1.4L6.8 13H21v-2H6.8l4.1-4.1z"/></svg>
+            返回正文
+          </button>
+
           <button id="prev" class="page-btn edge left" title="上一页">
             <svg viewBox="0 0 24 24"><path d="M15.5 4.5 8 12l7.5 7.5 1.4-1.4L10.8 12l6.1-6.1z"/></svg>
           </button>

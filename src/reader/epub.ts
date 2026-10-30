@@ -145,6 +145,10 @@ export interface EpubOptions {
   onPageMap?(m: EpubPageMap): void;
   /** 首次可见页就绪（用于测首屏耗时） */
   onFirstPaint?(): void;
+  /** 脚注/内链跳转后，是否能返回正文（决定「返回正文」按钮显隐） */
+  onNavBack?(canBack: boolean): void;
+  /** 目标不在 spine 里（常见于单独一册的注释文件）：把注释正文交出去弹层显示 */
+  onFootnote?(payload: { text: string; href: string }): void;
 }
 
 export interface EpubHandle {
@@ -163,6 +167,10 @@ export interface EpubHandle {
   removeHighlight(h: Highlight): void;
   /** 跳到某个 CFI（高亮定位） */
   display(cfi: string): void;
+  /** 脚注跳转后能否回到正文 */
+  canGoBack(): boolean;
+  /** 回到上一次脚注跳转前的位置；返回是否成功 */
+  goBack(): boolean;
   /** 听书：高亮 / 清除当前朗读的段落（follow 时翻到该段所在页）；返回是否已绘制 */
   setListenHighlight(cfi: string | null, follow?: boolean): boolean;
   /** 当前章节标题（用于标注归类） */
@@ -603,6 +611,8 @@ async function openComic(
     addHighlight: () => { /* 漫画为整页图，暂不支持文字高亮 */ },
     removeHighlight: () => { /* 同上 */ },
     setListenHighlight: () => false, /* 漫画没有可高亮的正文 */
+    canGoBack: () => false,
+    goBack: () => false,
     display: (cfi: string) => {
       const m = /^page-(\d+)$/.exec(cfi);
       if (!m) return;
@@ -688,6 +698,8 @@ async function openText(
       `img, svg { max-width: 100% !important; }`,
       `::selection { background: #00ada2 !important; color: #04241f !important; }`,
       // 听书：当前朗读的段落
+      `.tv-flash { background: ${typo.theme === "dark" ? "rgba(0,173,162,.45)" : "rgba(0,173,162,.32)"} !important;` +
+        ` border-radius: 3px; box-decoration-break: clone; transition: background .35s ease; }`,
       `.tv-listen { background: ${typo.theme === "dark" ? "rgba(0,173,162,.34)" : "rgba(0,173,162,.22)"} !important;` +
         ` border-radius: 3px; box-decoration-break: clone; -webkit-box-decoration-break: clone;` +
         ` transition: background .25s ease; }`,
@@ -707,6 +719,151 @@ async function openText(
     }
   };
 
+  /* ---------- 脚注 / 内链跳转 ---------- */
+
+  /** 读过脚注后回到正文的位置栈（栈里是跳转前的 CFI） */
+  const jumpStack: string[] = [];
+  const notifyNav = () => opts.onNavBack?.(jumpStack.length > 0);
+
+  const sectionHref = (): string => ((rendition.currentLocation?.() as any)?.start?.href as string | undefined) ?? "";
+
+  const resolveHref = (base: string, rel: string): string => {
+    const dir = base.includes("/") ? base.slice(0, base.lastIndexOf("/") + 1) : "";
+    const out: string[] = [];
+    for (const part of (dir + rel).split("/")) {
+      if (!part || part === ".") continue;
+      if (part === "..") out.pop(); else out.push(part);
+    }
+    return out.join("/");
+  };
+
+  /** 在已渲染的章节里找锚点（id 优先，其次 <a name>） */
+  const findFragment = (fragment: string): Element | null => {
+    let id = fragment;
+    try { id = decodeURIComponent(fragment); } catch { /* 保持原样 */ }
+    for (const c of ((rendition.getContents() as unknown as any[]) ?? [])) {
+      const doc: Document | undefined = c?.document;
+      const node = doc?.getElementById(id) ?? doc?.querySelector(`a[name="${id.replace(/"/g, '\\"')}"]`);
+      if (node) return node;
+    }
+    return null;
+  };
+
+  /** 章节异步排版，锚点可能晚一点才出现，轮询等它 */
+  const waitForFragment = async (fragment: string, ms: number): Promise<Element | null> => {
+    if (!fragment) return null;
+    const until = Date.now() + ms;
+    for (;;) {
+      const node = findFragment(fragment);
+      if (node) return node;
+      if (Date.now() >= until) return null;
+      await new Promise((r) => window.setTimeout(r, 120));
+    }
+  };
+
+  /** 取锚点所在段落的正文（锚点本身常只是「〔1〕」这个回链标记） */
+  const footnoteText = async (href: string, fragment: string): Promise<string> => {
+    try {
+      const doc = await book.load(href) as Document;
+      const id = decodeURIComponent(fragment);
+      const marker = doc.getElementById(id) ?? doc.querySelector(`a[name="${id.replace(/"/g, '\\"')}"]`);
+      const block = (marker?.closest("p, li, dd, div, aside") ?? marker) as Element | null;
+      let text = (block?.textContent ?? "").replace(/\s+/g, " ").trim()
+        .replace(/^[〔\[（(]\s*\d+\s*[〕\]）)]\s*/, "");
+      if (text.length < 12 && marker?.nextElementSibling) {
+        text = (marker.nextElementSibling.textContent ?? "").replace(/\s+/g, " ").trim();
+      }
+      return text.slice(0, 1200);
+    } catch { return ""; }
+  };
+
+  const flashTarget = (node: Element) => {
+    // 锚点往往只是「〔1〕」两个字，高亮整段才有辨识度
+    const block = (node.closest("p, li, dd, aside, h1, h2, h3, blockquote") ?? node) as Element;
+    block.classList.add("tv-flash");
+    window.setTimeout(() => block.classList.remove("tv-flash"), 1800);
+  };
+
+  /**
+   * 拦下 iframe 内的链接：脚注不该让 iframe 自己滚动（那样翻页布局会乱、也回不来），
+   * 改成在阅读器里定位到锚点所在页，并记下跳转前的位置。
+   */
+  async function followLink(event: MouseEvent, fallback: any): Promise<void> {
+    if (gone) return;
+    const anchor = (event.target as Element | null)?.closest?.("a[href]") as HTMLAnchorElement | null;
+    if (!anchor) return;
+    const raw = (anchor.getAttribute("href") ?? "").trim();
+    if (!raw || /^(?:https?:|mailto:|tel:|javascript:)/i.test(raw)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const base = sectionHref();
+    const here = ((rendition.currentLocation?.() as any)?.start?.cfi as string | undefined) ?? last.cfi;
+    const hash = raw.indexOf("#");
+    const file = hash >= 0 ? raw.slice(0, hash) : raw;
+    const fragment = hash >= 0 ? raw.slice(hash + 1) : "";
+    const href = resolveHref(base, file);
+    const sameDoc = !file || (base !== "" && href === base);
+
+    // 区分「注释」和普通内链（比如正文里指向别章的引用）：
+    // 注释的锚点文字基本只是 [1]〔1〕① 这类标记，或者目标文件本身叫 note/注释
+    const anchorText = (anchor.textContent ?? "").replace(/\s+/g, " ").trim();
+    const markerLike = anchorText.length > 0 && anchorText.length <= 8 && !/[\u4e00-\u9fff]{2,}/.test(anchorText);
+    const noteHref = /(?:^|[\/_.-])(?:note|notes|footnote|zhushi)/i.test(href) || /note|footnote/i.test(anchor.className);
+    const isNote = fragment !== "" && (markerLike || noteHref);
+
+    // 跳到某个锚点所在的页并闪一下
+    const land = async (node: Element | null) => {
+      if (!node) return;
+      try {
+        const contents = ((rendition.getContents() as unknown as any[]) ?? [])
+          .find((c) => c?.document === node.ownerDocument) ?? fallback;
+        const cfi = contents?.cfiFromNode?.(node, true);
+        if (cfi) await rendition.display(cfi);
+        flashTarget(node);
+      } catch { /* 锚点异常就停在原处 */ }
+    };
+
+    if (!isNote) {
+      // 普通内链：只翻页，不进返回栈（「返回正文」只服务注释）
+      jumpStack.length = 0;
+      notifyNav();
+      try {
+        await rendition.display(href);
+        if (fragment) await land(await waitForFragment(fragment, 1600));
+      } catch { /* 目标不可用就停在原处 */ }
+      return;
+    }
+
+    // 注释：记下当前位置，跳完能一键回正文
+    jumpStack.push(here);
+    notifyNav();
+    if (sameDoc) {
+      await land(findFragment(fragment) ?? await waitForFragment(fragment, 800));
+      return;
+    }
+    try {
+      await rendition.display(href);
+      const node = await waitForFragment(fragment, 2400);
+      if (node) await land(node);
+      else {
+        // 锚点始终没渲染出来：退回浮层显示注释正文，别停在章节开头
+        const text = await footnoteText(href, fragment);
+        if (text) { jumpStack.pop(); notifyNav(); opts.onFootnote?.({ text, href }); }
+      }
+    } catch { /* 目标不可用就停在原处 */ }
+  }
+
+  const goBackToText = (): boolean => {
+    const cfi = jumpStack.pop();
+    if (!cfi) { notifyNav(); return false; }
+    // 回到正文后立刻通知：栈空了按钮就该消失，不等翻页动画
+    notifyNav();
+    try {
+      void rendition.display(cfi).then(() => { if (!gone) notifyNav(); }).catch(() => {});
+    } catch { return false; }
+    return true;
+  };
+
   // 每次渲染新章节都要补一次主题（新增章节不会继承上一章的 style 标签）
   rendition.on("rendered", (_section: any, view: any) => {
     paintTheme(view?.contents);
@@ -714,6 +871,13 @@ async function openText(
     void view?.contents?.document?.fonts?.ready.then(syncHighlights);
     // 翻页/重排后把朗读段落的高亮补回来
     if (listenCfi) { listenEl = null; paintListen(listenCfi, false); }
+
+    // 脚注 / 内链：拦下 iframe 自身的导航，改成在阅读器里翻页定位
+    const linkDoc: Document | undefined = view?.contents?.document;
+    if (linkDoc && !(linkDoc as any).__tvLinkBound) {
+      (linkDoc as any).__tvLinkBound = true;
+      linkDoc.addEventListener("click", (event) => { void followLink(event as MouseEvent, view?.contents); }, true);
+    }
 
     // 选区在 iframe 内部，外层收不到事件：在这里挂「选区被清空」和「点了别处」两种收起时机
     const doc: Document | undefined = view?.contents?.document;
@@ -1234,8 +1398,8 @@ async function openText(
   window.addEventListener("resize", onResize);
 
   return {
-    next: () => { void rendition.next(); },
-    prev: () => { void rendition.prev(); },
+    next: () => { jumpStack.length = 0; notifyNav(); void rendition.next(); },
+    prev: () => { jumpStack.length = 0; notifyNav(); void rendition.prev(); },
     percent: () => last.percent || 0,
     atStart: () => last.atStart,
     atEnd: () => last.atEnd,
@@ -1244,6 +1408,8 @@ async function openText(
     pagination: () => pagination,
     addHighlight: (h: Highlight) => { unpaintHighlight(h); paintHighlight(h); },
     removeHighlight: (h: Highlight) => { unpaintHighlight(h); },
+    canGoBack: () => jumpStack.length > 0,
+    goBack: goBackToText,
     setListenHighlight: (cfi: string | null, follow = false) => {
       clearListen();
       listenCfi = cfi;
