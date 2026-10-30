@@ -80,6 +80,7 @@ function element() {
     set innerHTML(value) { this.children = []; },
     appendChild(child) { this.children.push(child); },
     replaceChildren(...children) { this.children = children; },
+    addEventListener() {}, removeEventListener() {}, setAttribute() {},
     getContext: () => ({}),
   };
 }
@@ -144,12 +145,14 @@ function mainContext(overrides = {}) {
   const nodes = Object.fromEntries([
     "viewer", "libraryView", "annView", "settingsView", "topline", "readerView", "docTitle", "footLeft",
     "footCenter", "footRight", "tocPanel", "settingsPop", "moreMenu", "insightView",
+    "backToText", "footnotePop", "footnoteText",
   ].map((key) => [key, element()]));
   const context = vm.createContext({
     ...nodes, readerSession: 0, currentId: null, handle: null, tocCache: [],
     lastListView: "ann", lastPercent: 0, typo: {}, performance,
     prefs: { transition: "slide", spread: "auto", unifiedMargin: true, startView: "home", confirmRemove: false },
-    document: { createElement: element, body: element() },
+    document: { createElement: element, getElementById: (id) => nodes[id] ?? element(), body: element() },
+    $: (selector) => nodes[String(selector).replace(/^#/, "")] ?? element(),
     window: { setTimeout, clearTimeout },
     listBooks: () => ["a", "b"].map((id) => ({ id, kind: "pdf", title: id })),
     getProgress: () => ({}), getBytes: async () => new ArrayBuffer(0),
