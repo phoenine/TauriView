@@ -12,6 +12,7 @@ pub struct ExportBook {
 }
 
 #[derive(Deserialize)]
+#[allow(dead_code)] // id/cfi/percent 仍由前端传，留作后续定位用，不写进笔记
 struct ExportCard {
     id: String,
     quote: String,
@@ -78,6 +79,12 @@ fn field(text: &str, name: &str) -> Option<(String, String)> {
     Some((value, scalar))
 }
 
+/// Whether the frontmatter declares `name:` at top level (value may still be empty).
+fn has_key(text: &str, name: &str) -> bool {
+    frontmatter(text).is_some_and(|(head, _)| head.lines()
+        .any(|line| line.trim_start() == line && line.strip_prefix(name).is_some_and(|rest| rest.starts_with(':'))))
+}
+
 fn normalized(title: &str) -> String {
     title.trim().trim_start_matches('《').trim_end_matches('》').trim().to_lowercase()
 }
@@ -106,18 +113,9 @@ fn card_name(stamp: &str, index: usize) -> Result<String, String> {
     Ok(format!("文章摘要_{stamp}{suffix}.md"))
 }
 
-fn chapter_number(path: &str) -> String {
-    for part in path.split(['›', '>']) {
-        let part = part.trim();
-        if let Some(after) = part.strip_prefix('第') {
-            if let Some((number, _)) = after.split_once('章') {
-                if !number.is_empty() && number.chars().all(|c| c.is_numeric() || "零〇一二三四五六七八九十百千万两".contains(c)) {
-                    return number.into();
-                }
-            }
-        }
-    }
-    String::new()
+/// Cards record the chapter they came from by name; the path separator varies.
+fn chapter_title(path: &str) -> String {
+    path.split(['›', '>']).map(str::trim).filter(|part| !part.is_empty()).last().unwrap_or("").to_string()
 }
 
 fn load_template(vault: &Path, name: &str, fallback: &str) -> Result<String, String> {
@@ -130,11 +128,12 @@ fn load_template(vault: &Path, name: &str, fallback: &str) -> Result<String, Str
     Ok(text)
 }
 
-/// Replace only populated export fields; preserve custom properties, defaults,
-/// lists and the entire template body. Templater's leading rename script is omitted.
+/// Fill only the properties the template already declares. Extra keys are never
+/// appended: the template is the schema, the export just fills values in.
 fn apply_template(template: &str, fields: &[(&str, String)]) -> String {
     let (head, body) = frontmatter(template).unwrap();
-    let mut rendered = String::from("---\n");
+    let mut rendered = String::from("---
+");
     let mut seen = std::collections::HashSet::new();
     let mut replacing = false;
     for line in head.lines() {
@@ -155,12 +154,21 @@ fn apply_template(template: &str, fields: &[(&str, String)]) -> String {
         rendered.push_str(line);
         rendered.push('\n');
     }
-    for (key, value) in fields {
-        if !seen.contains(*key) { rendered.push_str(&format!("{key}: {value}\n")); }
-    }
     rendered.push_str("---\n");
-    rendered.push_str(body);
+    rendered.push_str(strip_templater(body));
     rendered
+}
+
+/// Drop the leading `<%* ... %>` block so Templater commands never reach the note.
+fn strip_templater(body: &str) -> &str {
+    let mut rest = body.trim_start_matches(char::is_whitespace);
+    while rest.starts_with("<%") {
+        match rest.find("%>") {
+            Some(end) => rest = rest[end + 2..].trim_start_matches(char::is_whitespace),
+            None => break,
+        }
+    }
+    rest
 }
 
 struct BookNote { path: PathBuf, text: String }
@@ -193,8 +201,10 @@ fn export(vault: &Path, groups: Vec<ExportBook>) -> Result<ExportResult, String>
             let path = entry.map_err(|e| e.to_string())?.path();
             if path.extension().and_then(|s| s.to_str()) != Some("md") { continue; }
             let text = fs::read_to_string(&path).map_err(|e| format!("无法读取 {}：{e}", path.display()))?;
-            if let (Some(book), Some(card)) = (field(&text, "tauriview_book_id"), field(&text, "tauriview_annotation_id")) {
-                existing_cards.insert((book.0, card.0));
+            // 身份取自模板本身已有的属性，导出结果里不再出现 tauriview_* 私有字段
+            if let (Some(book), Some(quote), Some(created)) =
+                (field(&text, "book_key"), field(&text, "quote"), field(&text, "created")) {
+                existing_cards.insert((book.0, quote.0, created.0));
             }
         }
     }
@@ -212,6 +222,12 @@ fn export(vault: &Path, groups: Vec<ExportBook>) -> Result<ExportResult, String>
         "---\nstart:\nbook_key:\ncover:\nname:\nauthor:\ndescription:\nscore:\ncategory:\nsource:\nstatus:\n---\n\n## 读书卡片\n\n```dataview\nTABLE quote AS 原文, insight AS 批注 FROM \"读书卡片\"\nWHERE book_key = this.book_key\n```\n")?;
     let card_template = load_template(vault, "Flashcard.md",
         "---\ncreated:\nbook_key:\nquote:\nbook:\ninsight:\nchapter:\npage:\ntags:\nmood:\n---\n\n## 思考卡片\n\n> [!note] Topic\n> \n\n> [!abstract] Initial Understanding\n> \n\n> [!tip] Explanation for a kid\n> \n\n> [!warning] Knowledge Gap\n> \n\n> [!example] Analogy\n> \n\n> [!success] Final Explanation\n")?;
+    // book_key 是书页与卡片的连接键，模板里必须有，否则导出结果无法被 Dataview 关联
+    for (name, text) in [("Book.md", &book_template), ("Flashcard.md", &card_template)] {
+        if !has_key(text, "book_key") {
+            return Err(format!("模板 {name} 缺少 book_key 属性，导出需要用它关联卡片和书页，请先在模板里补上"));
+        }
+    }
     let mut pending = Vec::new();
     let mut planned_paths = std::collections::HashSet::new();
     let mut reserved_cards = std::collections::HashSet::new();
@@ -221,29 +237,29 @@ fn export(vault: &Path, groups: Vec<ExportBook>) -> Result<ExportResult, String>
         let matches: Vec<_> = notes.iter().filter(|note| {
             let title_match = normalized(note.path.file_stem().and_then(|s| s.to_str()).unwrap_or("")) == normalized(&book.title)
                 || field(&note.text, "name").is_some_and(|(name, _)| normalized(&name) == normalized(&book.title));
-            let id_match = field(&note.text, "tauriview_book_id").is_some_and(|(id, _)| id == book.id);
+            let id_match = field(&note.text, "tauriview_book_id").is_some_and(|(id, _)| id == book.id)
+                || field(&note.text, "book_key").is_some_and(|(key, _)| key == format!("tauriview-{}", book.id));
             title_match || id_match
         }).collect();
         if matches.len() > 1 { return Err(format!("《{}》匹配到多个书籍页，请先在 Books 中消除重名", book.title)); }
-        let (book_path, key) = if let Some(note) = matches.first() {
-            let key = field(&note.text, "book_key")
-                .ok_or_else(|| format!("{} 缺少可用的 book_key，请先在 Obsidian 中填写", note.path.display()))?.1;
-            (note.path.clone(), key)
+        let (book_path, key, key_value) = if let Some(note) = matches.first() {
+            let (key_value, key) = field(&note.text, "book_key")
+                .ok_or_else(|| format!("{} 缺少可用的 book_key，请先在 Obsidian 中填写", note.path.display()))?;
+            (note.path.clone(), key, key_value)
         } else {
             let path = book_dir.join(format!("《{}》.md", filename(&book.title)));
-            let key = quoted(&format!("tauriview-{}", book.id));
+            let key_value = format!("tauriview-{}", book.id);
             let text = apply_template(&book_template, &[
-                ("start", quoted(&book.created)), ("book_key", key.clone()),
+                ("start", quoted(&book.created)), ("book_key", quoted(&key_value)),
                 ("name", quoted(&book.title)), ("author", format!("\n  - {}", quoted(&book.author))),
-                ("tauriview_book_id", quoted(&book.id)),
             ]);
             notes.push(BookNote { path: path.clone(), text: text.clone() });
             pending.push(Pending { path: path.clone(), text, book: true });
-            (path, key)
+            (path, quoted(&key_value), key_value)
         };
         let link = format!("[[Books/{}]]", book_path.file_stem().unwrap().to_string_lossy());
         for card in book.items {
-            if !existing_cards.insert((book.id.clone(), card.id.clone())) {
+            if !existing_cards.insert((key_value.clone(), card.quote.clone(), card.created.clone())) {
                 result.skipped += 1;
                 continue;
             }
@@ -256,10 +272,7 @@ fn export(vault: &Path, groups: Vec<ExportBook>) -> Result<ExportResult, String>
             let mut text = apply_template(&card_template, &[
                 ("created", quoted(&card.created)), ("book_key", key.clone()),
                 ("quote", quoted(&card.quote)), ("book", quoted(&link)),
-                ("insight", quoted(&card.insight)), ("chapter", quoted(&chapter_number(&card.chapter))),
-                ("chapter_path", quoted(&card.chapter)), ("tauriview_book_id", quoted(&book.id)),
-                ("tauriview_annotation_id", quoted(&card.id)), ("tauriview_cfi", quoted(&card.cfi)),
-                ("tauriview_percent", card.percent.to_string()),
+                ("insight", quoted(&card.insight)), ("chapter", quoted(&chapter_title(&card.chapter))),
             ]);
             if !card.insight.trim().is_empty() {
                 text.push_str(&format!("\n\n## 批注\n\n{}\n", card.insight));
@@ -308,8 +321,8 @@ mod tests {
         fs::create_dir_all(dir.join(".obsidian")).unwrap();
         fs::create_dir_all(dir.join("Books")).unwrap();
         fs::create_dir_all(dir.join("Template")).unwrap();
-        fs::write(dir.join("Template/Book.md"), "---\nstart: template\nauthor:\n  - 模板作者\ncustom: 自定义属性\n---\nBOOK BODY\n").unwrap();
-        fs::write(dir.join("Template/Flashcard.md"), "<%* rename() %>---\nquote:\ntags:\n  - 阅读\nmood: happy\n---\nCARD BODY\n").unwrap();
+        fs::write(dir.join("Template/Book.md"), "---\nstart: template\nbook_key:\nname:\nauthor:\n  - 模板作者\ncustom: 自定义属性\n---\nBOOK BODY\n").unwrap();
+        fs::write(dir.join("Template/Flashcard.md"), "---\ncreated:\nbook_key:\nquote:\nbook:\ninsight:\nchapter:\npage:\ntags:\n  - 阅读\nmood: happy\n---\n<%* await tp.file.rename(\"文章摘要\") %>\nCARD BODY\n").unwrap();
         let original = "---\nbook_key: 895042278 # numeric identity\nname: 菜根谭\n---\n用户的正文";
         fs::write(dir.join("Books/《菜根谭》.md"), original).unwrap();
         let first = export(&dir, vec![group("book-1", "菜根谭"), group("book-2", "新书/标题")]).unwrap();
@@ -321,7 +334,9 @@ mod tests {
         assert_eq!(field(&card, "quote").unwrap().0, "原文\n第二行：\"引用\"");
         assert_eq!(field(&card, "book").unwrap().0, "[[Books/《菜根谭》]]");
         assert!(card.contains("CARD BODY") && card.contains("## 批注\n\nAI 理解：\n**重点**"));
-        assert!(!card.contains("rename()"));
+        // 模板就是属性清单：不追加 tauriview_* / chapter_path 等私有字段
+        assert!(!card.contains("tauriview_") && !card.contains("chapter_path"));
+        assert!(!card.contains("<%"));
         assert!(card.contains("tags:\n  - 阅读\nmood: happy\n"));
         fs::write(&path, format!("{card}\n用户修改")).unwrap();
         let second = export(&dir, vec![group("book-1", "菜根谭"), group("book-2", "新书/标题")]).unwrap();
@@ -333,16 +348,31 @@ mod tests {
         assert!(new_book.contains("custom: 自定义属性\n"));
         assert!(new_book.contains("author: \n  - \"作者\"\n"));
         assert!(!new_book.contains("模板作者"));
+        // 书籍页同样只写模板里的属性
+        assert!(!new_book.contains("tauriview_book_id"));
         assert_eq!(field(&new_book, "book_key").unwrap().0, "tauriview-book-2");
-        assert_eq!(chapter_number("书名 › 第一卷 › 第十二章 小节"), "十二");
-        assert_eq!(chapter_number("第3章 小节"), "3");
-        assert_eq!(chapter_number("推荐序"), "");
+        assert_eq!(chapter_title("书名 › 第一卷 › 第十二章 小节"), "第十二章 小节");
+        assert_eq!(chapter_title("第3章 小节"), "第3章 小节");
+        assert_eq!(chapter_title("推荐序"), "推荐序");
+        assert_eq!(chapter_title(""), "");
         // Missing identities and ambiguous title matches fail before any new files.
         fs::write(dir.join("Books/《缺少标识》.md"), "---\nname: 缺少标识\n---\n").unwrap();
         assert!(export(&dir, vec![group("book-3", "缺少标识")]).unwrap_err().contains("book_key"));
         fs::write(dir.join("Books/副本.md"), original).unwrap();
         assert!(export(&dir, vec![group("book-1", "菜根谭")]).unwrap_err().contains("多个"));
         assert!(export(&dir.join("Books"), vec![]).unwrap_err().contains(".obsidian"));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn template_without_book_key_is_rejected_before_writing() {
+        let dir = std::env::temp_dir().join(format!("tauriview-obsidian-nokey-test-{}", std::process::id()));
+        fs::create_dir_all(dir.join(".obsidian")).unwrap();
+        fs::create_dir_all(dir.join("Template")).unwrap();
+        fs::write(dir.join("Template/Book.md"), "---\nname:\n---\nBODY\n").unwrap();
+        let error = export(&dir, vec![group("book-1", "甲")]).unwrap_err();
+        assert!(error.contains("book_key"), "{error}");
+        assert!(!dir.join("Books").exists() && !dir.join("读书卡片").exists());
         fs::remove_dir_all(dir).unwrap();
     }
 
