@@ -214,6 +214,15 @@ pub fn run() {
         .manage(tts::TtsState::default())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
+        // 第二次启动改为把已有窗口提到前台：WebView2 的 profile 只能被一个进程用，
+        // 不拦的话新进程会因为 0x8007139F 静默退出，看起来就是「双击没反应」。
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
         .invoke_handler(tauri::generate_handler![library_dir, import_book, list_fonts, start_ai_request, cancel_ai_request,
             obsidian::export_obsidian, obsidian::validate_obsidian_vault,
             dictionary::list_dictionaries, dictionary::lookup_dictionary, dictionary::import_dictionary, dictionary::set_dictionary_enabled,
