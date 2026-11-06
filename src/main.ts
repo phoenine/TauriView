@@ -1150,7 +1150,16 @@ function closeReader(): void {
 
 /* ---------------- 打开书 ---------------- */
 
+// 双击卡片会连发两次 openBook（两次读大文件/两次解析），这里做同书去抖
+let lastOpenAt = 0;
+let lastOpenId = "";
+
 async function openBook(id: string, startCfi?: string): Promise<void> {
+  const now = Date.now();
+  if (id === lastOpenId && now - lastOpenAt < 500) return;
+  lastOpenAt = now;
+  lastOpenId = id;
+
   const meta = listBooks().find((b) => b.id === id);
   if (!meta) return;
 
