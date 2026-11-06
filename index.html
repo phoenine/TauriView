@@ -522,6 +522,14 @@
 
           <div id="viewer"><div class="placeholder">未打开书籍</div></div>
 
+          <!-- 打开阶段提示：解析/首屏出来前显示 -->
+          <div id="readerLoading" class="reader-loading" hidden>
+            <div class="reader-loading-box">
+              <div class="reader-loading-text" id="readerLoadingText">正在打开…</div>
+              <div class="reader-loading-bar"><i></i></div>
+            </div>
+          </div>
+
           <!-- 页脚叠在纸面上：左页码 · 中章节路径 · 右百分比（仿 Aquile） -->
           <footer id="readerFoot">
             <span class="foot-left" id="footLeft">—</span>
@@ -749,5 +757,10 @@
 
     <input id="filePicker" type="file" accept=".epub,.pdf" hidden />
     <script type="module" src="/src/main.ts"></script>
+
+    <!-- 导入/后台操作的轻提示 -->
+    <div id="toast" class="toast" hidden>
+      <span class="toast-spin"></span><span id="toastText"></span>
+    </div>
   </body>
 </html>

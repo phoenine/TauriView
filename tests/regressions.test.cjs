@@ -146,6 +146,7 @@ function mainContext(overrides = {}) {
     "viewer", "libraryView", "annView", "settingsView", "topline", "readerView", "docTitle", "footLeft",
     "footCenter", "footRight", "tocPanel", "settingsPop", "moreMenu", "insightView",
     "backToText", "footnotePop", "footnoteText",
+    "readerLoading", "readerLoadingText", "toast", "toastText",
   ].map((key) => [key, element()]));
   const context = vm.createContext({
     ...nodes, readerSession: 0, currentId: null, handle: null, tocCache: [],

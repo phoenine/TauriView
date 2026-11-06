@@ -167,6 +167,10 @@ const docTitle = $<HTMLElement>("#docTitle");
 const backToText = $<HTMLButtonElement>("#backToText");
 const footnotePop = $<HTMLElement>("#footnotePop");
 const footnoteText = $<HTMLElement>("#footnoteText");
+const readerLoading = $<HTMLElement>("#readerLoading");
+const readerLoadingText = $<HTMLElement>("#readerLoadingText");
+const toast = $<HTMLElement>("#toast");
+const toastText = $<HTMLElement>("#toastText");
 const viewer = $<HTMLElement>("#viewer");
 const footLeft = $<HTMLElement>("#footLeft");
 const footCenter = $<HTMLElement>("#footCenter");
@@ -1165,6 +1169,9 @@ async function openBook(id: string, startCfi?: string): Promise<void> {
   insightView.hidden = true;
   topline.hidden = true;
   readerView.hidden = false;
+  // 打开阶段提示：大文件读字节/解析要好一会儿，先把占位显示出来
+  readerLoading.hidden = false;
+  readerLoadingText.textContent = `正在打开《${meta.title}》…`;
   // 阅读态：侧栏收起，整窗给页面（Aquile 的做法）
   document.body.classList.add("reading");
   void setWindowTitle(meta.title);
@@ -1220,6 +1227,7 @@ async function openBook(id: string, startCfi?: string): Promise<void> {
       },
         onFirstPaint: () => {
           if (!active()) return;
+          readerLoading.hidden = true;
           (window as any).__paintMs = Math.round(performance.now() - openedAt);
         },
         onReady: async ({ title, author }) => {
@@ -1287,6 +1295,8 @@ async function openBook(id: string, startCfi?: string): Promise<void> {
     if (meta.kind === "epub") await persistTocMap();
   } catch (error) {
     if (!active()) return;
+    readerLoading.hidden = true;
+    hideToast();
     closeReader();
     alert(`打开《${meta.title}》失败：${error instanceof Error ? error.message : String(error)}`);
   }
@@ -1294,6 +1304,15 @@ async function openBook(id: string, startCfi?: string): Promise<void> {
 
 function setProgressBar(ratio: number): void {
   progressFill.style.width = `${Math.max(0, Math.min(1, ratio)) * 100}%`;
+}
+
+/* 导入/后台操作的轻提示 */
+function showToast(text: string): void {
+  toastText.textContent = text;
+  toast.hidden = false;
+}
+function hideToast(): void {
+  toast.hidden = true;
 }
 
 /* ---------------- 导入 ---------------- */
@@ -1313,6 +1332,7 @@ async function importBytes(name: string, bytes: ArrayBuffer, originalPath?: stri
   }
 
   const id = newId();
+  showToast(`正在导入《${name.replace(/\.(epub|pdf)$/i, "")}》…`);
   const filePath = await putBytes(id, bytes, kind);
 
   // 封面：EPUB 取内嵌封面，PDF 渲染第一页
@@ -1333,6 +1353,7 @@ async function importBytes(name: string, bytes: ArrayBuffer, originalPath?: stri
     filePath: filePath ?? originalPath,
   });
   renderShelf();
+  hideToast();
   await openBook(id);
 }
 
@@ -1366,11 +1387,13 @@ async function importNativePath(src: string): Promise<void> {
   }
 
   const id = newId();
+  showToast(`正在导入《${name.replace(/\.(epub|pdf)$/i, "")}》…`);
   let info: ImportedFile;
   try {
     const { invoke } = await import("@tauri-apps/api/core");
     info = await invoke<ImportedFile>("import_book", { src, id });
   } catch (e) {
+    hideToast();
     alert(`导入失败：${String(e)}`);
     return;
   }
@@ -1397,6 +1420,7 @@ async function importNativePath(src: string): Promise<void> {
     filePath: info.path,
   });
   renderShelf();
+  hideToast();
   await openBook(id);
 }
 
