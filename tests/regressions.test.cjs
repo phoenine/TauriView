@@ -150,6 +150,7 @@ function mainContext(overrides = {}) {
   ].map((key) => [key, element()]));
   const context = vm.createContext({
     ...nodes, readerSession: 0, currentId: null, handle: null, tocCache: [],
+    lastOpenAt: 0, lastOpenId: "",
     lastListView: "ann", lastPercent: 0, typo: {}, performance,
     prefs: { transition: "slide", spread: "auto", unifiedMargin: true, startView: "home", confirmRemove: false },
     document: { createElement: element, getElementById: (id) => nodes[id] ?? element(), body: element() },

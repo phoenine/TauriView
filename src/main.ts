@@ -2898,6 +2898,25 @@ async function boot(): Promise<void> {
     if (recent) void openBook(recent.id);
   });
   (window as any).__tauriview = { importBytes, openBook, listBooks, showLibrary, measureEpubPages };
+
+  // 双击 .epub/.pdf 启动本程序：把命令行里的文件路径接进来导入并打开
+  if (isTauri) {
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      const pending = await invoke<string | null>("take_pending_file");
+      if (pending) void importNativePath(pending);
+    } catch { /* 命令不存在（旧版后端）就忽略 */ }
+    try {
+      const { listen } = await import("@tauri-apps/api/event");
+      await listen("open-file", async () => {
+        try {
+          const { invoke } = await import("@tauri-apps/api/core");
+          const pending = await invoke<string | null>("take_pending_file");
+          if (pending) void importNativePath(pending);
+        } catch { /* 忽略 */ }
+      });
+    } catch { /* 忽略 */ }
+  }
 }
 
 void boot();

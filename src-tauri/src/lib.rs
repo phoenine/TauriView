@@ -1,4 +1,4 @@
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 mod dictionary;
 mod tts;
 mod obsidian;
@@ -6,6 +6,22 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 type AiTasks = Arc<Mutex<HashMap<String, tauri::async_runtime::JoinHandle<()>>>>;
+
+/// 双击 .epub/.pdf 启动时，命令行里的文件路径先存这里，前端就绪后再取走。
+#[derive(Default)]
+struct PendingFile(Mutex<Option<String>>);
+
+fn first_book_arg(args: impl IntoIterator<Item = String>) -> Option<String> {
+    args.into_iter().find(|a| {
+        let lower = a.to_ascii_lowercase();
+        lower.ends_with(".epub") || lower.ends_with(".pdf")
+    })
+}
+
+#[tauri::command]
+fn take_pending_file(state: tauri::State<'_, PendingFile>) -> Option<String> {
+    state.0.lock().ok()?.take()
+}
 
 #[derive(serde::Serialize, Clone)]
 struct AiReply {
@@ -212,18 +228,35 @@ pub fn run() {
         .manage(AiTasks::default())
         .manage(dictionary::DictionaryState::default())
         .manage(tts::TtsState::default())
+        .manage(PendingFile::default())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         // 第二次启动改为把已有窗口提到前台：WebView2 的 profile 只能被一个进程用，
         // 不拦的话新进程会因为 0x8007139F 静默退出，看起来就是「双击没反应」。
-        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+        // 顺带把双击那个文件的路径存下来，通知前端打开。
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            if let Some(path) = first_book_arg(argv) {
+                if let Some(state) = app.try_state::<PendingFile>() {
+                    *state.0.lock().unwrap() = Some(path);
+                }
+            }
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.unminimize();
                 let _ = window.show();
                 let _ = window.set_focus();
+                let _ = window.emit("open-file", ());
             }
         }))
-        .invoke_handler(tauri::generate_handler![library_dir, import_book, list_fonts, start_ai_request, cancel_ai_request,
+        .setup(|app| {
+            // 首次启动就是双击文件进来的：存下路径，前端 boot 完再取
+            if let Some(path) = first_book_arg(std::env::args()) {
+                if let Some(state) = app.try_state::<PendingFile>() {
+                    *state.0.lock().unwrap() = Some(path);
+                }
+            }
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![library_dir, import_book, list_fonts, start_ai_request, cancel_ai_request, take_pending_file,
             obsidian::export_obsidian, obsidian::validate_obsidian_vault,
             dictionary::list_dictionaries, dictionary::lookup_dictionary, dictionary::import_dictionary, dictionary::set_dictionary_enabled,
             tts::tts_request])

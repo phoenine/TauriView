@@ -37,6 +37,20 @@
     },
     "active": true,
     "targets": ["nsis", "msi"],
-    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/icon.ico"]
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/icon.ico"],
+    "fileAssociations": [
+      {
+        "ext": ["epub"],
+        "name": "EPUB 电子书",
+        "description": "EPUB 电子书",
+        "mimeType": "application/epub+zip"
+      },
+      {
+        "ext": ["pdf"],
+        "name": "PDF 文档",
+        "description": "PDF 文档",
+        "mimeType": "application/pdf"
+      }
+    ]
   }
 }
