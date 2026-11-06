@@ -1487,6 +1487,17 @@ async function openText(
   };
 }
 
+/** 给可能永不落定的 Promise 加截止时间，超时抛可读错误 */
+function withDeadline<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = window.setTimeout(() => reject(new Error(message)), ms);
+    promise.then(
+      (value) => { window.clearTimeout(timer); resolve(value); },
+      (error) => { window.clearTimeout(timer); reject(error); },
+    );
+  });
+}
+
 /** 打开 EPUB：自动判断文字书 / 图片书 */
 export async function openEpub(
   container: HTMLElement,
@@ -1495,9 +1506,12 @@ export async function openEpub(
 ): Promise<EpubHandle> {
   container.innerHTML = "";
   const book: Book = ePub(bytes);
-  await book.ready;
+  // epub.js 的 book.ready 在包装/目录解析异常时会永远挂着（异常被吞进内部
+  // Promise），界面就成了「点了没反应」。这里给它一个截止时间，失败时报出来。
+  await withDeadline(Promise.resolve(book.ready), 20000,
+    "打开超时：这本书的容器或目录结构解析失败（目录文件扩展名不规范时常见）");
 
-  const meta: any = await book.loaded.metadata;
+  const meta: any = await withDeadline(Promise.resolve(book.loaded.metadata), 10000, "读取书目信息超时");
   opts.onReady({
     title: (meta?.title || "").trim(),
     author: (meta?.creator || "").trim() || "未知作者",
