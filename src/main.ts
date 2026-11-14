@@ -1374,13 +1374,37 @@ async function pickNative(): Promise<void> {
     filters: [{ name: "电子书", extensions: ["epub", "pdf"] }],
   });
   const paths: string[] = Array.isArray(picked) ? picked : picked ? [picked] : [];
-  for (const p of paths) await importNativePath(p);
+  for (const p of paths) await enqueueImport(p);
 }
 
 interface ImportedFile {
   path: string;
   size: number;
   mtime: number;
+  /** 书库里已有同一文件的副本时，Rust 不复制、直接返回那本书的 id */
+  duplicateId?: string;
+}
+
+/** 源文件路径归一化：分隔符、大小写、首尾空白不同也认成同一个文件 */
+function sourceKey(path: string): string {
+  return path.trim().replace(/[\\/]+/g, "\\").replace(/\\+$/, "").toLowerCase();
+}
+
+/** 书库里已经导入过这个源文件的那本书（没有则 undefined） */
+function findBySource(src: string): BookMeta | undefined {
+  const key = sourceKey(src);
+  return listBooks().find((b) => b.sourcePath && sourceKey(b.sourcePath) === key);
+}
+
+/**
+ * 导入串行队列：双击同一本书会连发两次导入，
+ * 并行的两个 import 在落盘前都查不到对方，就会各复制一份。
+ */
+let importQueue: Promise<void> = Promise.resolve();
+function enqueueImport(src: string): Promise<void> {
+  const run = importQueue.then(() => importNativePath(src));
+  importQueue = run.catch(() => {});
+  return run;
 }
 
 /**
@@ -1388,6 +1412,15 @@ interface ImportedFile {
  * 前端只读复制后的副本 —— 所以 fs scope 不需要放开任意路径。
  */
 async function importNativePath(src: string): Promise<void> {
+  // 同一本书再次双击：不再复制一份，直接打开书库里已有的那本
+  const known = findBySource(src);
+  if (known) {
+    hideToast();
+    renderShelf();
+    if (!(currentId === known.id && !readerView.hidden)) await openBook(known.id);
+    return;
+  }
+
   const name = src.split(/[\\/]/).pop() || "book.epub";
   const kind = detectKind(name);
   if (!kind) {
@@ -1407,19 +1440,33 @@ async function importNativePath(src: string): Promise<void> {
     return;
   }
 
+  // 老版本导入的书没有 sourcePath，靠 Rust 按文件内容认出它：
+  // 认领这条记录并补上来源路径，不要再生成第二本。
+  const duplicate = info.duplicateId ? listBooks().find((b) => b.id === info.duplicateId) : undefined;
+  if (duplicate) {
+    await upsertBook({ ...duplicate, sourcePath: src });
+    renderShelf();
+    hideToast();
+    if (!(currentId === duplicate.id && !readerView.hidden)) await openBook(duplicate.id);
+    return;
+  }
+
+  // Rust 可能在书库里复用了已有文件；此时元数据也要用那个 id
+  const bookId = info.duplicateId ?? id;
+
   // 抽封面：读复制后的文件（scope 允许）
   try {
     const fs: any = await import("@tauri-apps/plugin-fs");
     const bytes: Uint8Array = await fs.readFile(info.path);
     const buf = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
     const cover = kind === "epub" ? await extractEpubCover(buf) : await extractPdfCover(buf);
-    if (cover) await putCover(id, cover);
+    if (cover) await putCover(bookId, cover);
   } catch {
     /* 没封面就退回占位卡片 */
   }
 
   await upsertBook({
-    id,
+    id: bookId,
     title: name.replace(/\.(epub|pdf)$/i, ""),
     author: "",
     kind,
@@ -1427,10 +1474,11 @@ async function importNativePath(src: string): Promise<void> {
     addedAt: Date.now(),
     mtime: info.mtime,
     filePath: info.path,
+    sourcePath: src,
   });
   renderShelf();
   hideToast();
-  await openBook(id);
+  await openBook(bookId);
 }
 
 filePicker.addEventListener("change", async () => {
@@ -2902,20 +2950,22 @@ async function boot(): Promise<void> {
   // 双击 .epub/.pdf 启动本程序：把命令行里的文件路径接进来导入并打开
   if (isTauri) {
     try {
-      const { invoke } = await import("@tauri-apps/api/core");
-      const pending = await invoke<string | null>("take_pending_file");
-      if (pending) void importNativePath(pending);
-    } catch { /* 命令不存在（旧版后端）就忽略 */ }
-    try {
       const { listen } = await import("@tauri-apps/api/event");
+      // 先装监听再取 pending：否则启动瞬间的二次双击可能只把路径留在 PendingFile 里，
+      // 事件已经发完，前端再也收不到。
       await listen("open-file", async () => {
         try {
           const { invoke } = await import("@tauri-apps/api/core");
           const pending = await invoke<string | null>("take_pending_file");
-          if (pending) void importNativePath(pending);
+          if (pending) void enqueueImport(pending);
         } catch { /* 忽略 */ }
       });
     } catch { /* 忽略 */ }
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      const pending = await invoke<string | null>("take_pending_file");
+      if (pending) void enqueueImport(pending);
+    } catch { /* 命令不存在（旧版后端）就忽略 */ }
   }
 }
 

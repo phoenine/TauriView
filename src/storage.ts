@@ -24,6 +24,8 @@ export interface BookMeta {
   mtime?: number;
   /** Tauri 后端里是该书的绝对路径；浏览器后端里为空 */
   filePath?: string;
+  /** 导入时的原始文件路径（双击打开去重用；书库里的副本路径在 filePath） */
+  sourcePath?: string;
   /** EPUB 分页缓存：视口签名 → 每个 spine 文件的页数 */
   pagination?: { signature: string; perSpine: number[] };
   /** 漫画「章节 → 图片路径」缓存：sig 用文件字节数，书被替换时自动失效 */

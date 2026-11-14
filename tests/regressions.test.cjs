@@ -240,3 +240,41 @@ test("back button and Escape both return to annotations, including while loading
   assert.equal(context.annView.hidden, false);
   assert.equal(context.readerView.hidden, true);
 });
+
+test("imports are serialized so double-clicked files cannot race into two copies", async () => {
+  const order = [];
+  const context = vm.createContext({
+    importQueue: Promise.resolve(),
+    importNativePath: async (src) => {
+      order.push(`start:${src}`);
+      await tick();
+      order.push(`end:${src}`);
+    },
+  });
+  run(functions("src/main.ts", ["enqueueImport"]), context);
+  await Promise.all([context.enqueueImport("a"), context.enqueueImport("b")]);
+  assert.deepEqual(order, ["start:a", "end:a", "start:b", "end:b"]);
+});
+
+test("opening the same source file again reuses the library entry instead of importing a copy", async () => {
+  const opened = [];
+  const books = [{ id: "book-1", kind: "epub", title: "书", sourcePath: "C:/Books/One.epub" }];
+  const context = vm.createContext({
+    importQueue: Promise.resolve(),
+    listBooks: () => books,
+    renderShelf() {}, hideToast() {},
+    currentId: null, readerView: { hidden: true },
+    upsertBook: async () => { throw new Error("should not import twice"); },
+    invoke: async () => { throw new Error("should not copy the file again"); },
+  });
+  context.openBook = async (id) => {
+    opened.push(id);
+    context.currentId = id;
+    context.readerView.hidden = false;
+  };
+  run(functions("src/main.ts", ["sourceKey", "findBySource", "enqueueImport", "importNativePath"]), context);
+  await context.enqueueImport("c:\\books\\ONE.epub");
+  await context.enqueueImport("C:/Books/One.epub");
+  assert.deepEqual(opened, ["book-1"]);
+  assert.equal(books.length, 1);
+});

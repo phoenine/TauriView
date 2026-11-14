@@ -129,6 +129,93 @@ struct ImportedFile {
     path: String,
     size: u64,
     mtime: u64,
+    /// 书库里已有内容相同的书时不复制，直接返回那本书的 id
+    #[serde(rename = "duplicateId")]
+    duplicate_id: Option<String>,
+}
+
+fn mtime_millis(meta: &std::fs::Metadata) -> u64 {
+    meta.modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// 分块读满 buf。File::read 允许短读，按单次读取长度比较会误判。
+fn read_chunk(file: &mut std::fs::File, buf: &mut [u8]) -> std::io::Result<usize> {
+    use std::io::Read;
+    let mut filled = 0;
+    while filled < buf.len() {
+        match file.read(&mut buf[filled..]) {
+            Ok(0) => break,
+            Ok(n) => filled += n,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(filled)
+}
+
+/// 两个文件内容是否完全相同（同名同大小也不一定是同一本书）
+fn same_content(a: &std::path::Path, b: &std::path::Path) -> bool {
+    let (mut fa, mut fb) = match (std::fs::File::open(a), std::fs::File::open(b)) {
+        (Ok(x), Ok(y)) => (x, y),
+        _ => return false,
+    };
+    let mut ba = [0u8; 64 * 1024];
+    let mut bb = [0u8; 64 * 1024];
+    loop {
+        let na = match read_chunk(&mut fa, &mut ba) {
+            Ok(n) => n,
+            Err(_) => return false,
+        };
+        let nb = match read_chunk(&mut fb, &mut bb) {
+            Ok(n) => n,
+            Err(_) => return false,
+        };
+        if na != nb || ba[..na] != bb[..nb] {
+            return false;
+        }
+        if na == 0 {
+            return true;
+        }
+    }
+}
+
+/// 在书库目录里找内容与 src 完全相同的书，返回 (书 id, 书库内路径)。
+/// 书库文件名就是书 id，所以老记录（没有 sourcePath）也能被认出来。
+fn find_duplicate(
+    dir: &std::path::Path,
+    src: &std::path::Path,
+    ext: &str,
+) -> Option<(String, std::path::PathBuf)> {
+    let src_len = std::fs::metadata(src).ok()?.len();
+    for entry in std::fs::read_dir(dir).ok()?.flatten() {
+        let path = entry.path();
+        if !path.is_file() || path == src {
+            continue;
+        }
+        let same_ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| e.eq_ignore_ascii_case(ext));
+        if !same_ext {
+            continue;
+        }
+        // 先用大小筛一遍：同一文件的副本一定同大小，只有撞上才读内容
+        match std::fs::metadata(&path) {
+            Ok(meta) if meta.len() == src_len => {}
+            _ => continue,
+        }
+        if !same_content(src, &path) {
+            continue;
+        }
+        if let Some(id) = path.file_stem().and_then(|s| s.to_str()) {
+            return Some((id.to_string(), path));
+        }
+    }
+    None
 }
 
 /// 把用户选中的书复制进书库目录。
@@ -152,21 +239,28 @@ fn import_book(app: tauri::AppHandle, src: String, id: String) -> Result<Importe
         .join("books");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
 
+    // 同一个文件再次双击：不再复制第二份，直接复用书库里已有的那本
+    if let Some((existing, path)) = find_duplicate(&dir, &src_path, &ext) {
+        if let Ok(meta) = std::fs::metadata(&path) {
+            return Ok(ImportedFile {
+                path: path.to_string_lossy().to_string(),
+                size: meta.len(),
+                mtime: mtime_millis(&meta),
+                duplicate_id: Some(existing),
+            });
+        }
+    }
+
     let dest = dir.join(format!("{id}.{ext}"));
     std::fs::copy(&src_path, &dest).map_err(|e| format!("复制失败：{e}"))?;
 
     let meta = std::fs::metadata(&dest).map_err(|e| e.to_string())?;
-    let mtime = meta
-        .modified()
-        .ok()
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0);
 
     Ok(ImportedFile {
         path: dest.to_string_lossy().to_string(),
         size: meta.len(),
-        mtime,
+        mtime: mtime_millis(&meta),
+        duplicate_id: None,
     })
 }
 
@@ -220,6 +314,92 @@ fn list_fonts() -> Vec<String> {
 #[tauri::command]
 fn list_fonts() -> Vec<String> {
     Vec::new()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scratch_dir(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("tauriview-test-{}-{tag}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// 双击同一个文件：书库里已有的副本必须被认出来（文件名即书 id）
+    #[test]
+    fn find_duplicate_matches_identical_copy_under_other_name() {
+        let dir = scratch_dir("same");
+        let outside = scratch_dir("same-src");
+        let mut content = vec![0u8; 200 * 1024]; // 跨多个 64KB 块
+        for (i, b) in content.iter_mut().enumerate() {
+            *b = (i % 251) as u8;
+        }
+        let src = outside.join("源文件.epub");
+        std::fs::write(&src, &content).unwrap();
+
+        assert!(find_duplicate(&dir, &src, "epub").is_none(), "空书库不该命中");
+
+        let copy = dir.join("book-a.epub");
+        std::fs::write(&copy, &content).unwrap();
+        let (id, path) = find_duplicate(&dir, &src, "epub").expect("同内容副本应命中");
+        assert_eq!(id, "book-a");
+        assert_eq!(path, copy);
+
+        // 扩展名不同（封面、注释等）不参与比较
+        std::fs::write(dir.join("book-b.pdf"), &content).unwrap();
+        assert_eq!(find_duplicate(&dir, &src, "epub").unwrap().0, "book-a");
+
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&outside);
+    }
+
+    /// 大小相同、内容不同：不能误认成同一本书
+    #[test]
+    fn find_duplicate_ignores_same_size_different_bytes() {
+        let dir = scratch_dir("diff");
+        let outside = scratch_dir("diff-src");
+        let a = vec![7u8; 4096];
+        let mut b = a.clone();
+        b[0] = 8;
+        let src = outside.join("source.pdf");
+        std::fs::write(&src, &a).unwrap();
+        std::fs::write(dir.join("other.pdf"), &b).unwrap();
+        assert!(find_duplicate(&dir, &src, "pdf").is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&outside);
+    }
+
+    /// 源文件自己躺在书库目录里时不算「副本」
+    #[test]
+    fn find_duplicate_never_returns_the_source_file_itself() {
+        let dir = scratch_dir("self");
+        let src = dir.join("book.epub");
+        std::fs::write(&src, b"payload").unwrap();
+        assert!(find_duplicate(&dir, &src, "epub").is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 前缀相同但更短的文件不是同一本书
+    #[test]
+    fn same_content_rejects_prefix_and_trailing_bytes() {
+        let dir = scratch_dir("prefix");
+        let full = vec![3u8; 8192];
+        let short = full[..4096].to_vec();
+        let mut longer = full.clone();
+        longer.push(3);
+        let a = dir.join("a.epub");
+        let b = dir.join("b.epub");
+        let c = dir.join("c.epub");
+        std::fs::write(&a, &full).unwrap();
+        std::fs::write(&b, &short).unwrap();
+        std::fs::write(&c, &longer).unwrap();
+        assert!(!same_content(&a, &b));
+        assert!(!same_content(&a, &c));
+        assert!(same_content(&a, &a));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
