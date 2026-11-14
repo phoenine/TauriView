@@ -55,7 +55,11 @@ export default defineConfig({
     },
   },
   build: {
-    target: "es2022",
+    // 目标环境固定是 WebView2（Chromium），不需要降级语法；
+    // 而且这台机器上 esbuild 对 2 MB 的整包做 minify 时会因临时文件删不掉报
+    // "Access is denied"，所以降级交给 terser，esbuild 只做单文件转译。
+    target: "esnext",
+    minify: "terser",
     outDir: "dist",
     emptyOutDir: true,
     chunkSizeWarningLimit: 4000,
