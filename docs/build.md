@@ -6,7 +6,9 @@
 npm run build:desktop
 ```
 
-它等价于先执行 `tauri build`，再执行 `scripts/fix-installer-integrity.ps1`。
+它等价于先执行 `tauri build --bundles nsis`，再执行 `scripts/fix-installer-integrity.ps1`。
+
+这里显式只打 NSIS，是因为默认的 MSI 构建仍会因 WiX 代码页 1252 不支持中文产品字符串而失败；MSI 失败会让后面自动修复步骤不执行。
 
 ## 为什么需要后处理
 
@@ -26,7 +28,7 @@ C:\Users\<用户>\AppData\Local\TauriView\tauriview.exe
 
 ## 手动构建
 
-如果已经直接运行过 `npm run tauri build`，可以补跑：
+如果已经直接运行过 `npm run tauri build -- --bundles nsis`，可以补跑：
 
 ```powershell
 npm run fix:installer

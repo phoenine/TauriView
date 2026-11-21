@@ -8,7 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "build:desktop": "tauri build && powershell -NoProfile -ExecutionPolicy Bypass -File scripts/fix-installer-integrity.ps1",
+    "build:desktop": "tauri build --bundles nsis && powershell -NoProfile -ExecutionPolicy Bypass -File scripts/fix-installer-integrity.ps1",
     "fix:installer": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/fix-installer-integrity.ps1",
     "postinstall": "node scripts/patch-epubjs.mjs"
   },
