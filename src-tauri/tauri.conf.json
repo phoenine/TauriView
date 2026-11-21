@@ -32,8 +32,16 @@
       "../resources/dictionaries/": "dictionaries/",
       "../resources/tts/worker.py": "tts/worker.py",
       "../resources/tts/model.json": "tts/model.json",
+      "../resources/tts/references/Serena.wav": "tts/references/Serena.wav",
+      "../resources/tts/references/Uncle_Fu.wav": "tts/references/Uncle_Fu.wav",
+      "../resources/tts/references/Fairy.wav": "tts/references/Fairy.wav",
       "../resources/tts/setup.ps1": "tts/setup.ps1",
       "../resources/tts/requirements.txt": "tts/requirements.txt"
+    },
+    "windows": {
+      "nsis": {
+        "installerHooks": "installer-hooks.nsh"
+      }
     },
     "active": true,
     "targets": ["nsis", "msi"],

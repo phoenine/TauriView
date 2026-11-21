@@ -41,7 +41,7 @@ async function epub() {
       window.Audio = AudioStub;
     });
     let state = { voice: 'Serena', selected: null, task: null, tasks: [], engine: { phase: 'idle', message: '' }, cacheBytes: 0, quotaBytes: 2147483648,
-      model: { id: 'Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice', installed: true, status: 'ready', done: 2498383534, total: 2498383534, error: '' } };
+      model: { id: 'Qwen/Qwen3-TTS-12Hz-0.6B-Base', installed: true, status: 'ready', done: 2516100892, total: 2516100892, error: '' } };
     let preparedAt = 0, runtimeAvailable = true, installingUntil = 0;
     await page.route('**/__tts', async route => {
       const req = route.request().postDataJSON(); requests.push(req);

@@ -420,18 +420,18 @@
           <h3 class="sp-heading">听书</h3>
           <p class="sp-note">文字 EPUB 支持从当前段落或划线位置开始听。音频分段准备，听书进度单独保存。</p>
           <div class="sp-row">
-            <div class="sp-text"><label class="sp-label" for="setTtsVoice">音色</label><div class="sp-desc">切换后，从新的朗读起点生效。</div></div>
-            <select id="setTtsVoice" class="sp-select"><option value="Serena">Serena · 温柔女声</option><option value="Uncle_Fu">福叔 · 沉稳男声</option></select>
+            <div class="sp-text"><label class="sp-label" for="setTtsVoice">音色</label><div class="sp-desc">Base 克隆音色，参考音频随应用内置；切换后，从新的朗读起点生效。</div></div>
+            <select id="setTtsVoice" class="sp-select"><option value="Serena">Serena · 温柔女声</option><option value="Uncle_Fu">福叔 · 沉稳男声</option><option value="Fairy">童话女声 · 温柔</option></select>
           </div>
           <div class="sp-row">
             <div class="sp-text"><label class="sp-label" for="setTtsModel">语音模型</label><div class="sp-desc">本地中文语音 · 需要 NVIDIA CUDA 显卡</div></div>
-            <select id="setTtsModel" class="sp-select"><option>Qwen3-TTS · 0.6B CustomVoice</option></select>
+            <select id="setTtsModel" class="sp-select"><option>Qwen3-TTS · 0.6B Base（音色克隆）</option></select>
           </div>
           <div class="sp-row">
             <div class="sp-text"><div class="sp-label">模型下载</div><div class="sp-desc" id="setTtsStatus" role="status">正在检查本地模型…</div></div>
             <button id="setTtsDownload" class="sp-btn" type="button">下载模型</button>
           </div>
-          <p class="sp-note">首次使用自动准备语音组件，并从 ModelScope 下载模型（约 2.5 GB）。模型支持取消和断点续传；所有文件保存在默认位置，朗读过程不联网。</p>
+          <p class="sp-note">首次使用自动准备语音组件，并从 ModelScope 下载模型（Base 约 2.5 GB）。模型支持取消和断点续传；所有文件保存在默认位置，朗读过程不联网。</p>
           <div class="sp-row">
             <div class="sp-text"><div class="sp-label">音频缓存</div><div class="sp-desc" id="setTtsCache">音频缓存在本机。</div></div>
             <button id="setTtsClear" class="sp-btn" type="button">清理缓存</button>

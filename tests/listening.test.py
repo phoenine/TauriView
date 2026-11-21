@@ -26,6 +26,14 @@ class ListeningTests(unittest.TestCase):
         self.calls = []
         self.service = worker.Listening(self.temp.name, pathlib.Path(self.temp.name) / 'model', self.synth)
 
+    def test_bundled_clone_references_are_complete(self):
+        for voice in worker.VOICES:
+            name, text = worker.REFERENCES[voice]
+            self.assertTrue((worker.REFERENCE_DIR / name).is_file(), name)
+            self.assertIsInstance(text, str)
+            if text:
+                self.assertGreater(len(text), 20)
+
     def tearDown(self):
         self.service.close(); self.temp.cleanup()
 
@@ -128,6 +136,30 @@ class DownloadTests(unittest.TestCase):
                 self.assertEqual(fetch.call_args.args[0].get_header('Range'), 'bytes=4-')
             self.assertEqual((target / 'model.safetensors').read_bytes(), payload)
             self.assertTrue(download.snapshot()['installed'])
+            self.assertEqual(download.snapshot()['status'], 'ready')
+
+    def test_resumes_when_server_returns_200_with_content_range(self):
+        payload = b'validated-model'
+        manifest = {'id': 'Qwen/test', 'files': [{'path': 'config.json', 'size': len(payload), 'sha256': hashlib.sha256(payload).hexdigest()}]}
+        with tempfile.TemporaryDirectory() as directory, patch.object(worker, 'MODEL', manifest):
+            target = pathlib.Path(directory)
+            (target / 'config.json.download').write_bytes(payload[:4])
+            response = io.BytesIO(payload[4:]); response.status = 200; response.headers = {'Content-Range': f'bytes 4-{len(payload)-1}/{len(payload)}'}
+            with patch.object(worker.urllib.request, 'urlopen', return_value=response):
+                download = worker.Download(target); download.run()
+            self.assertEqual((target / 'config.json').read_bytes(), payload)
+            self.assertEqual(download.snapshot()['status'], 'ready')
+
+    def test_restarts_when_server_ignores_range(self):
+        payload = b'validated-model'
+        manifest = {'id': 'Qwen/test', 'files': [{'path': 'config.json', 'size': len(payload), 'sha256': hashlib.sha256(payload).hexdigest()}]}
+        with tempfile.TemporaryDirectory() as directory, patch.object(worker, 'MODEL', manifest):
+            target = pathlib.Path(directory)
+            (target / 'config.json.download').write_bytes(payload[:4])
+            response = io.BytesIO(payload); response.status = 200; response.headers = {}
+            with patch.object(worker.urllib.request, 'urlopen', return_value=response):
+                download = worker.Download(target); download.run()
+            self.assertEqual((target / 'config.json').read_bytes(), payload)
             self.assertEqual(download.snapshot()['status'], 'ready')
 
     def test_invalid_download_is_not_published(self):

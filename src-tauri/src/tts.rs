@@ -54,12 +54,12 @@ fn config(root: &std::path::Path) -> Result<Config, String> {
     let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join(".local-tts");
     let development_python = dev.join("fast-venv").join(if cfg!(windows) {"Scripts/python.exe"} else {"bin/python"});
     let managed_python = root.join("runtime/Scripts/python.exe");
-    let model = dev.join("models/Qwen3-TTS-12Hz-0.6B-CustomVoice");
+    let model = dev.join("models/Qwen3-TTS-12Hz-0.6B-Base");
     Ok(Config {
         python: if root.join("runtime/ready.json").is_file() && managed_python.is_file() { managed_python.to_string_lossy().into() }
             else if cfg!(debug_assertions) && development_python.is_file() { development_python.to_string_lossy().into() } else { String::new() },
-        model: if cfg!(debug_assertions) && model.is_dir() && !root.join("models/Qwen3-TTS-12Hz-0.6B-CustomVoice/config.json").exists() { model.to_string_lossy().into() }
-            else { root.join("models/Qwen3-TTS-12Hz-0.6B-CustomVoice").to_string_lossy().into() },
+        model: if cfg!(debug_assertions) && model.is_dir() && !root.join("models/Qwen3-TTS-12Hz-0.6B-Base/config.json").exists() { model.to_string_lossy().into() }
+            else { root.join("models/Qwen3-TTS-12Hz-0.6B-Base").to_string_lossy().into() },
     })
 }
 fn resource(app: &tauri::AppHandle, name: &str) -> Result<PathBuf, String> {

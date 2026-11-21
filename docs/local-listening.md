@@ -1,6 +1,6 @@
 # 本地听书实现
 
-本地语音使用 Faster-Qwen3-TTS 0.5.4 的 Torch / CUDA Graph 后端，Qwen3-TTS 12Hz 0.6B CustomVoice 权重，bfloat16、SDPA，24 kHz 单声道 PCM16。默认 Serena，可切换 Uncle_Fu。没有提供 0.6B 不支持的风格指令。
+本地语音使用 Faster-Qwen3-TTS 0.5.4 的 Torch / CUDA Graph 后端，Qwen3-TTS 12Hz 0.6B Base 权重，bfloat16、SDPA，24 kHz 单声道 PCM16。Base 没有内置说话人；应用内置三段参考音频，用零样本克隆保留 Serena、Uncle_Fu 两个音色名；童话女声没有参考文本，走 x-vector。Serena/Uncle_Fu 的中文目标走 ICL，英文目标走 x-vector，避免参考音素串到英文里。未启用风格指令。
 
 ## 界面
 
@@ -25,11 +25,11 @@
 
 缺少运行环境时，用户点击「下载并准备」，Windows 安装器在默认目录下载校验固定版本 uv，准备独立 Python 3.12.9、固定 CUDA wheels 和依赖，然后检查 CUDA。无需系统安装 Python、修改 PATH 或管理员权限。依赖快照在 resources/tts/requirements.txt，安装进度与日志在 setup-status.json / setup.log。关闭应用会终止其安装进程树；再次点击可重试。此安装器的脚本解析、参数与当前依赖已检查，尚未在无 Python 的干净 Windows 机器上完成完整安装验收。
 
-模型通过 ModelScope 下载，manifest 固定 10 个文件的大小和 SHA256；临时文件支持 Range 续传，完整校验后才发布。网络探测已验证配置文件与模型 Range 响应。没有重复下载本机已有的 2.5 GB 权重。
+模型通过 ModelScope 下载，manifest 固定 11 个文件的大小和 SHA256；临时文件支持 Range 续传，完整校验后才发布。网络探测已验证配置文件与模型 Range 响应。没有重复下载本机已有的 2.5 GB 权重。
 
 Python 工作进程通过 JSON-lines 通信，日志使用 stderr，与协议分开。生产由 Rust 持有进程，通过 Tauri IPC 调用；开发由 Vite 的仅限本机、校验 Origin 的适配器转发，生产不额外监听 HTTP 端口。模型首次生成时加载，单线程合成，闲置 5 分钟释放模型。没有 CPU 静默回退。
 
-音频按模型全部推理文件指纹、引擎版本、生成参数、处理版本、音色、语言、文本建立内容缓存，先校验 WAV 再原子发布；播放前校验音频校验和。缓存上限 2 GiB，回收未使用任务的旧片段，保留当前任务与排队任务。清理缓存需先暂停播放和生成；任务位置仍保留。
+音频按模型全部推理文件与参考音频指纹、引擎版本、生成参数、处理版本、音色、语言、文本建立内容缓存，先校验 WAV 再原子发布；播放前校验音频校验和。缓存上限 2 GiB，回收未使用任务的旧片段，保留当前任务与排队任务。清理缓存需先暂停播放和生成；任务位置仍保留。
 
 ## 验证
 
@@ -41,4 +41,4 @@ Python 工作进程通过 JSON-lines 通信，日志使用 stderr，与协议分
 
 上面的 Python 命令使用项目已经验证的 fast-venv。浏览器脚本需要 Playwright；AI 和词典测试使用 `tests/fixtures/sherlock.epub`，测试用书不随应用打包。语音的中文读音和长时间接缝仍需要实际听查，技术校验不替代主观音色评价。
 
-来源：[Faster-Qwen3-TTS](https://github.com/andimarafioti/faster-qwen3-tts)、[Qwen 模型](https://modelscope.cn/models/Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice)、[uv 0.12.13](https://github.com/astral-sh/uv/releases/tag/0.12.13)。
+来源：[Faster-Qwen3-TTS](https://github.com/andimarafioti/faster-qwen3-tts)、[Qwen 模型](https://modelscope.cn/models/Qwen/Qwen3-TTS-12Hz-0.6B-Base)、[uv 0.12.13](https://github.com/astral-sh/uv/releases/tag/0.12.13)。

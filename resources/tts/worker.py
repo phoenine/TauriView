@@ -15,6 +15,7 @@ import wave
 import urllib.request
 
 MODEL = json.loads(pathlib.Path(__file__).with_name('model.json').read_text(encoding='utf-8'))
+REFERENCE_DIR = pathlib.Path(__file__).with_name('references')
 
 
 class Download:
@@ -58,7 +59,9 @@ class Download:
                     url = 'https://modelscope.cn/models/' + MODEL['id'] + '/resolve/master/' + item['path']
                     headers = {'User-Agent': 'TauriView/0.1', **({'Range': f'bytes={offset}-'} if offset else {})}
                     with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=30) as response:
-                        if offset and (response.status != 206 or not response.headers.get('Content-Range', '').startswith(f'bytes {offset}-')):
+                        content_range = response.headers.get('Content-Range', '')
+                        resumed = bool(offset) and response.status in (200, 206) and content_range.startswith(f'bytes {offset}-')
+                        if not resumed:
                             offset = 0
                         with partial.open('ab' if offset else 'wb') as file:
                             while True:
@@ -79,10 +82,19 @@ class Download:
         except Exception as error:
             with self.lock: self.state.update(status='error', error=str(error))
 
-VOICES = ('Serena', 'Uncle_Fu')
-RECIPE = {'version': 1, 'dtype': 'bfloat16', 'attention': 'sdpa', 'seed': 42,
+# Base has no built-in speakers. These bundled clips keep the two existing voice
+# names working through zero-shot cloning instead of a preset speaker table.
+REFERENCE_TEXT = ('雨停以后，石板路还亮着。卖花的老人收起摊子，把最后一束白菊放进竹篮，'
+                 '慢慢往巷子深处走。街角的灯一盏一盏亮起来。')
+REFERENCES = {
+    'Serena': ('Serena.wav', REFERENCE_TEXT),
+    'Uncle_Fu': ('Uncle_Fu.wav', REFERENCE_TEXT),
+    'Fairy': ('Fairy.wav', ''),
+}
+VOICES = tuple(REFERENCES)
+RECIPE = {'version': 2, 'dtype': 'bfloat16', 'attention': 'sdpa', 'seed': 42,
           'max_new_tokens': 768, 'min_new_tokens': 2, 'temperature': .9,
-          'top_k': 50, 'top_p': 1., 'repetition_penalty': 1.05, 'non_streaming_mode': True}
+          'top_k': 50, 'top_p': 1., 'repetition_penalty': 1.05, 'non_streaming_mode': False}
 LEVEL = {'version': 1, 'rms': .06, 'max_gain_db': 6., 'peak_db': -1.}
 
 
@@ -138,9 +150,17 @@ class FastVoice:
         import numpy as np
         import soundfile as sf
         self.status('generating', '正在准备音频…')
+        reference = REFERENCE_DIR / REFERENCES[voice][0]
+        if not reference.is_file():
+            raise RuntimeError('语音参考文件缺失，请重新安装应用。')
+        # ICL keeps the reference's prosody for Chinese; x-vector avoids phoneme
+        # bleed-through when the target text is English.
+        xvec_only = language == 'English' or not REFERENCES[voice][1]
+        ref_text = '' if xvec_only else REFERENCES[voice][1]
         self.torch.manual_seed(RECIPE['seed'])
         with self.torch.inference_mode():
-            audio, rate = self.model.generate_custom_voice(text=text, speaker=voice.lower(), language=language,
+            audio, rate = self.model.generate_voice_clone(text=text, language=language,
+                ref_audio=str(reference), ref_text=ref_text, xvec_only=xvec_only,
                 **{k: v for k, v in RECIPE.items() if k not in ('version', 'dtype', 'attention', 'seed')})
         samples = np.asarray(audio[0]).reshape(-1)
         if rate != 24000 or not np.isfinite(samples).all() or len(samples) < rate / 4 or np.sqrt(np.mean(samples**2)) < .001:
@@ -212,16 +232,17 @@ class Listening:
     def _fingerprint(self):
         if self.test_synth: return 'test-engine-v1'
         files = [self.model_path / item['path'] for item in MODEL['files']]
-        if not all(p.is_file() for p in files):
-            raise ValueError('本地模型文件不完整，请在朗读设置中选择模型目录。')
-        signature = [(str(p), p.stat().st_size, p.stat().st_mtime_ns) for p in files]
+        references = [REFERENCE_DIR / name for name, _ in REFERENCES.values()]
+        if not all(p.is_file() for p in files + references):
+            raise ValueError('本地模型或语音参考文件不完整，请重新下载模型。')
+        signature = [(str(p), p.stat().st_size, p.stat().st_mtime_ns) for p in files + references]
         if self.fingerprint_cache and self.fingerprint_cache[0] == signature:
             return self.fingerprint_cache[1]
         receipt = self.root / 'model-fingerprint.json'
         known = json.loads(receipt.read_text(encoding='utf-8')) if receipt.exists() else {}
         if known.get('signature') != [list(s) for s in signature]:
             hashes = []
-            for path in files:
+            for path in files + references:
                 h = hashlib.sha256()
                 with path.open('rb') as file:
                     for block in iter(lambda: file.read(1024 * 1024), b''): h.update(block)
@@ -229,7 +250,8 @@ class Listening:
             known = {'signature': signature, 'hashes': hashes}
             atomic_json(receipt, known)
         packages = {name: importlib.metadata.version(name) for name in ('faster-qwen3-tts', 'qwen-tts-hf', 'transformers', 'torch')}
-        value = digest({'weights': known['hashes'], 'packages': packages, 'recipe': RECIPE, 'level': LEVEL})
+        value = digest({'weights': known['hashes'][:len(files)], 'references': known['hashes'][len(files):],
+            'packages': packages, 'recipe': RECIPE, 'level': LEVEL})
         self.fingerprint_cache = (signature, value)
         return value
 

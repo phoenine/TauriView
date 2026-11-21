@@ -8,10 +8,10 @@ export function devListening() {
   let root = join(process.cwd(), '.local-tts', 'dev-tts');
   let child, setup, pending = new Map(), sequence = 0, chain = Promise.resolve();
   const config = () => {
-    const model = join(process.cwd(), '.local-tts/models/Qwen3-TTS-12Hz-0.6B-CustomVoice');
+    const model = join(process.cwd(), '.local-tts/models/Qwen3-TTS-12Hz-0.6B-Base');
     const managedPython = join(root, 'runtime/Scripts/python.exe');
     return { python: existsSync(managedPython) && existsSync(join(root, 'runtime/ready.json')) ? managedPython : join(process.cwd(), '.local-tts/fast-venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python'),
-      model: existsSync(model) && !existsSync(join(root, 'models/Qwen3-TTS-12Hz-0.6B-CustomVoice/config.json')) ? model : join(root, 'models/Qwen3-TTS-12Hz-0.6B-CustomVoice') };
+      model: existsSync(model) && !existsSync(join(root, 'models/Qwen3-TTS-12Hz-0.6B-Base/config.json')) ? model : join(root, 'models/Qwen3-TTS-12Hz-0.6B-Base') };
   };
   const configuration = () => {
     const available = existsSync(config().python);

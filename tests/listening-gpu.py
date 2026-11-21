@@ -12,7 +12,7 @@ import wave
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 PYTHON = ROOT / '.local-tts/fast-venv/Scripts/python.exe'
-MODEL = ROOT / '.local-tts/models/Qwen3-TTS-12Hz-0.6B-CustomVoice'
+MODEL = ROOT / '.local-tts/models/Qwen3-TTS-12Hz-0.6B-Base'
 OUTPUT = ROOT / '.local-tts' / ('listening-smoke-' + time.strftime('%Y%m%d-%H%M%S'))
 OUTPUT.mkdir()
 
