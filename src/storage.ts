@@ -206,6 +206,83 @@ export async function removeBook(id: string): Promise<void> {
     localStorage.setItem(PROGRESS_KEY, JSON.stringify(progress));
     await idb("readwrite", (s) => s.delete(id)).catch(() => {});
   }
+  await clearReadingIndex(id).catch(() => {});
+}
+
+export interface ReadingIndexEntry {
+  section: number;
+  signature: string;
+  filter: Uint32Array;
+  listCounts: number[];
+}
+
+const INDEX_TERMS = "terms";
+let readingIndexDb: Promise<IDBDatabase> | undefined;
+
+function openReadingIndexDb(): Promise<IDBDatabase> {
+  return readingIndexDb ??= new Promise<IDBDatabase>((resolve, reject) => {
+    const req = indexedDB.open("tauriview-reading-index", 2);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (db.objectStoreNames.contains("sections")) db.deleteObjectStore("sections");
+      if (db.objectStoreNames.contains(INDEX_TERMS)) req.transaction!.objectStore(INDEX_TERMS).clear();
+      else db.createObjectStore(INDEX_TERMS);
+    };
+    req.onsuccess = () => {
+      const db = req.result;
+      db.onversionchange = () => { db.close(); readingIndexDb = undefined; };
+      resolve(db);
+    };
+    req.onerror = () => reject(req.error);
+    req.onblocked = () => reject(new Error("前文索引正在升级"));
+  }).catch(error => {
+    readingIndexDb = undefined;
+    throw error;
+  });
+}
+
+function readingIndexRange(bookId: string): IDBKeyRange {
+  return IDBKeyRange.bound([bookId, 0], [bookId, Number.MAX_SAFE_INTEGER]);
+}
+
+export async function loadReadingIndex(bookId: string, signature: string): Promise<ReadingIndexEntry[]> {
+  const db = await openReadingIndexDb();
+  return new Promise((resolve, reject) => {
+    const entries: ReadingIndexEntry[] = [];
+    const tx = db.transaction(INDEX_TERMS, "readwrite");
+    const req = tx.objectStore(INDEX_TERMS).openCursor(readingIndexRange(bookId));
+    req.onsuccess = () => {
+      const cursor = req.result;
+      if (!cursor) return;
+      const entry = cursor.value as ReadingIndexEntry;
+      if (entry.signature === signature) entries.push(entry);
+      else cursor.delete();
+      cursor.continue();
+    };
+    tx.oncomplete = () => resolve(entries);
+    tx.onabort = () => reject(tx.error);
+  });
+}
+
+export async function saveReadingIndexSection(bookId: string, entry: ReadingIndexEntry): Promise<void> {
+  const db = await openReadingIndexDb();
+  if (!books.some(book => book.id === bookId)) return;
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(INDEX_TERMS, "readwrite");
+    tx.objectStore(INDEX_TERMS).put(entry, [bookId, entry.section]);
+    tx.oncomplete = () => resolve();
+    tx.onabort = () => reject(tx.error);
+  });
+}
+
+async function clearReadingIndex(bookId: string): Promise<void> {
+  const db = await openReadingIndexDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(INDEX_TERMS, "readwrite");
+    tx.objectStore(INDEX_TERMS).delete(readingIndexRange(bookId));
+    tx.oncomplete = () => resolve();
+    tx.onabort = () => reject(tx.error);
+  });
 }
 
 /** 写入书文件本体；Tauri 后端返回落盘绝对路径 */

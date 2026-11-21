@@ -1,4 +1,4 @@
-import { buildReadingMessages, type ChatMessage, type ReadingAnchor } from "./context";
+import { buildReadingMessages, type ChatMessage, type ReadingAnchor, type ReadingContext } from "./context";
 import { loadAiConfig, requestReadingAi } from "./client";
 import { renderNoteMarkdown } from "../note-markdown";
 
@@ -16,7 +16,8 @@ let version = 0;
 let saving = false;
 const savedAnswers = new Set<string>();
 let saveNote: ((anchor: ReadingAnchor, answer: string) => Promise<void>) | null = null;
-const EXPLAIN = "结合划线附近的前后文，直接解释这一处想表达什么，帮我读懂后继续阅读。术语用通俗的话说，简洁说明即可。";
+const EXPLAIN = "请解释这处划线，帮我接着读。";
+const EXAMPLE = "请举个例子。";
 
 function busy(): void {
   box.setAttribute("aria-busy", String(!!request));
@@ -69,7 +70,23 @@ async function ask(text: string): Promise<void> {
   body.scrollTop = 0;
   busy();
   try {
-    const messages = buildReadingMessages(current, "nearby", history, text, text === EXPLAIN ? "explain" : "example");
+    if (current.text.length > 6000) throw new Error("选区太长，请选取 6000 字以内的段落再理解。");
+    let passage = current.passage;
+    if (current.loadContext && !current.readingContext) {
+      let context: ReadingContext | undefined;
+      try {
+        context = await current.loadContext(controller.signal);
+      } catch (error) {
+        if (!controller.signal.aborted) console.warn("阅读上下文加载失败", error);
+      }
+      if (version !== token || current !== anchor || controller.signal.aborted) return;
+      if (context && [...context.before, ...context.after].some(excerpt => excerpt.text.trim())) current.readingContext = context;
+      else if (!passage && current.loadPassage) {
+        try { passage = current.loadPassage(); }
+        catch (error) { console.warn("选区原文加载失败", error); }
+      }
+    }
+    const messages = buildReadingMessages({ ...current, passage }, current.loadContext ? "reading" : "nearby", history, text, text === EXPLAIN ? "explain" : "example");
     // 简洁程度由提示词控制，预算留出完整收尾的空间，不在客户端按字数截断。
     const limits = { maxTokens: 1600 };
     const output = await requestReadingAi(loadAiConfig(), messages, controller.signal, (partial) => {
@@ -103,7 +120,7 @@ export function initReadingAi(save: (selection: ReadingAnchor, output: string) =
   saveNote = save;
   $("aiClose").addEventListener("click", closeReadingAi);
   $("aiConfigure").addEventListener("click", () => { closeReadingAi(); openSettings(); });
-  example.addEventListener("click", () => void ask("用一个简短、生活化的自拟例子说明选区的含义，并点明它与原文的对应关系。"));
+  example.addEventListener("click", () => void ask(EXAMPLE));
   $("aiRetry").addEventListener("click", () => void ask(lastQuestion || EXPLAIN));
   toNote.addEventListener("click", async () => {
     if (!anchor || !answer || saving || savedAnswers.has(answer) || !saveNote) return;

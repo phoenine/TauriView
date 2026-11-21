@@ -1213,6 +1213,7 @@ async function openBook(id: string, startCfi?: string): Promise<void> {
       if (!active()) return;
       opened = await openEpub(mount, bytes, {
         startCfi: from,
+        readingIndex: { bookId: id, signature: pageMapSig },
         highlights: saved,
         onSelect: (selection) => { if (active()) annOnSelect(selection); },
         onHighlightClick: (highlightId) => { if (active()) annOnClick(highlightId); },

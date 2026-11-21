@@ -16,7 +16,7 @@ import {
 } from "./storage";
 import { HIGHLIGHT_COLORS } from "./reader/epub";
 import { renderNoteMarkdown } from "./note-markdown";
-import type { PassageContext, ReadingAnchor } from "./ai/context";
+import type { ReadingAnchor } from "./ai/context";
 import { initReadingAi, openReadingAi, closeReadingAi } from "./ai/ui";
 import { initDictionary, openDictionary, closeDictionary, type DictionarySnapshot } from "./dictionary/ui";
 
@@ -131,7 +131,8 @@ let filter: Filter = "all";
 /** 标注视图：只看收藏的条目（星标按钮切换） */
 let favOnly = false;
 let sortDesc = true;
-let pending: { cfi: string; text: string; passage?: PassageContext } | null = null;
+type PendingSelection = Pick<ReadingAnchor, "cfi" | "text" | "passage" | "loadPassage" | "loadContext">;
+let pending: PendingSelection | null = null;
 let editing: string | null = null;
 let dirtyHl = false;
 let dirtyBm = false;
@@ -196,10 +197,10 @@ export function annOpen(next?: Filter): void {
 
 /* ---------------- 选中文字 → 浮动色板 ---------------- */
 
-export function annOnSelect(sel: { cfi: string; text: string; passage?: PassageContext; rect: { left: number; top: number; width: number; height: number } }): void {
+export function annOnSelect(sel: PendingSelection & { rect: { left: number; top: number; width: number; height: number } }): void {
   if (!sel.cfi || !sel.text) return;
   hidePreview();
-  pending = { cfi: sel.cfi, text: sel.text, passage: sel.passage };
+  pending = { cfi: sel.cfi, text: sel.text, passage: sel.passage, loadPassage: sel.loadPassage, loadContext: sel.loadContext };
   editing = null;
 
   const barW = hlBar.offsetWidth || 260;

@@ -1,9 +1,11 @@
 import ePub, { Book, Rendition, EpubCFI } from "epubjs";
 import type { Highlight } from "../storage";
-import { capturePassageContext, type PassageContext } from "../ai/context";
+import { capturePassageContext, type ReadingAnchor } from "../ai/context";
 import { speechSegments } from "../listening/segments";
 import type { SpeechChapter } from "../listening/types";
 import { attachNoteMarker } from "./note-marker";
+import { readingChapterEnd, readingTocTarget } from "./reading-chapter";
+import { EarlierReadingIndex, readingBlocks } from "./reading-index";
 
 /** 阅读主题 */
 export type ReaderTheme = "light" | "sepia" | "dark";
@@ -123,6 +125,8 @@ export interface EpubOptions {
   cachedPageMap?: EpubPageMap;
   /** 本书的缓存签名（通常用文件字节数） */
   pageMapSig?: string;
+  /** Indexed source belongs to one edition of one imported EPUB. */
+  readingIndex?: { bookId: string; signature: string };
   /** 已有标注（文字书用于恢复高亮） */
   highlights?: Highlight[];
   /** 字号 / 行距 / 主题 */
@@ -132,7 +136,7 @@ export interface EpubOptions {
   /** true = 永远单栏（关闭双页） */
   singleColumn?: boolean;
   /** 用户选中文本，弹出工具栏；rect 为应用坐标系 */
-  onSelect?(sel: { cfi: string; text: string; passage?: PassageContext; rect: { left: number; top: number; width: number; height: number } }): void;
+  onSelect?(sel: Pick<ReadingAnchor, "cfi" | "text" | "passage" | "loadPassage" | "loadContext"> & { rect: { left: number; top: number; width: number; height: number } }): void;
   /** 点击某条已有高亮 */
   onHighlightClick?(id: string): void;
   /** 悬停高亮；坐标统一为应用视口坐标，null 表示移出。 */
@@ -666,6 +670,35 @@ async function openText(
 
   let typo: Typography = { ...DEFAULT_TYPO, ...(opts.typography ?? {}) };
   let gone = false;
+  const spineItems = (book.spine as unknown as { spineItems: { href: string; index: number }[] }).spineItems;
+  const spineLength = spineItems.length;
+  const earlier = new EarlierReadingIndex(spineLength, async index => {
+    const section = book.spine.get(index);
+    return section ? book.load(section.href) as Promise<Document> : null;
+  }, opts.readingIndex?.bookId, opts.readingIndex?.signature);
+  const tocEntries = (includeUnlinked = false): TocEntry[] => {
+    const out: TocEntry[] = [];
+    const walk = (items: any[], level: number) => {
+      for (const it of items ?? []) {
+        if (it && (it.href || includeUnlinked)) out.push({ label: String(it.label ?? "").trim(), href: it.href ?? "", level });
+        if (it?.subitems?.length) walk(it.subitems, level + 1);
+      }
+    };
+    walk((book.navigation as any)?.toc ?? [], 0);
+    return out;
+  };
+
+  const spineByPath = new Map<string, number>();
+  for (const item of spineItems) {
+    const target = readingTocTarget(book.resolve(item.href, false), "");
+    if (target) spineByPath.set(target.path, item.index);
+  }
+  const resolveTocTarget = (href: string) => {
+    const nav = book.packaging?.navPath || book.packaging?.ncxPath;
+    const target = readingTocTarget(href, nav ? book.resolve(nav, false) : book.path?.toString() ?? "");
+    const section = target && spineByPath.get(target.path);
+    return section === undefined ? undefined : { section, fragment: target.fragment };
+  };
   let highlightSyncFrame = 0;
   const syncHighlights = () => {
     if (gone || highlightSyncFrame) return;
@@ -984,6 +1017,7 @@ async function openText(
     opts.onDeselect?.();
     const start = location?.start ?? {};
     const sectionIndex: number = start.index ?? 0;
+    earlier.follow(sectionIndex);
     const displayed = start.displayed ?? {};
     const pageInSection: number = displayed.page ?? 1;
     const pagesInSection: number = displayed.total ?? 1;
@@ -1014,6 +1048,7 @@ async function openText(
 
   await rendition.display(opts.startCfi || undefined);
   opts.onFirstPaint?.();
+  earlier.start();
 
   /* ---------- 高亮 / 笔记 ---------- */
 
@@ -1168,12 +1203,41 @@ async function openText(
       }
 
       const r = range.getBoundingClientRect();
+      const selectedRange = range.cloneRange();
       const frame = contents?.document?.defaultView?.frameElement as HTMLElement | null;
       const base0 = frame ? frame.getBoundingClientRect() : ({ left: 0, top: 0 } as DOMRect);
       opts.onSelect?.({
         cfi,
         text,
-        passage: capturePassageContext(range),
+        loadPassage: () => capturePassageContext(selectedRange, true),
+        loadContext: async signal => {
+          const empty = { before: [], after: [] };
+          const active = () => !gone && !signal.aborted;
+          const doc = selectedRange.startContainer.ownerDocument;
+          const index = new EpubCFI(cfi).spinePos;
+          if (!active()) return empty;
+          if (!doc?.body?.contains(selectedRange.startContainer)
+            || !doc.body.contains(selectedRange.endContainer) || !Number.isInteger(index)
+            || index < 0 || index >= spineLength || selectedRange.collapsed) throw new Error("无法定位 EPUB 选区");
+          const end = readingChapterEnd(index, selectedRange, doc, tocEntries(true), resolveTocTarget);
+          const prefix = doc.createRange();
+          prefix.selectNodeContents(doc.body);
+          prefix.setEnd(selectedRange.startContainer, selectedRange.startOffset);
+          const suffix = doc.createRange();
+          suffix.selectNodeContents(doc.body);
+          suffix.setStart(selectedRange.endContainer, selectedRange.endOffset);
+          if (end.marker) suffix.setEndBefore(end.marker);
+          const [preceding, following] = await Promise.all([
+            readingBlocks(prefix.cloneContents(), active),
+            readingBlocks(suffix.cloneContents(), active),
+          ]);
+          if (!active()) return empty;
+          const [before, after] = await Promise.all([
+            earlier.lookup(index, text, preceding, signal),
+            earlier.lookupFollowing(index, text, preceding, following, end, signal),
+          ]);
+          return active() ? { before, after } : empty;
+        },
         rect: { left: base0.left + r.left, top: base0.top + r.top, width: r.width, height: r.height },
       });
     } catch {
@@ -1441,17 +1505,7 @@ async function openText(
       const label = (book.navigation as any)?.get(section.href)?.label?.trim() || doc.querySelector('h1,h2,h3')?.textContent?.trim() || last.label || "正文";
       return { href: section.href, label, segments, startIndex };
     },
-    toc: () => {
-      const out: TocEntry[] = [];
-      const walk = (items: any[], level: number) => {
-        for (const it of items ?? []) {
-          if (it?.href) out.push({ label: String(it.label ?? "").trim(), href: it.href, level });
-          if (it?.subitems?.length) walk(it.subitems, level + 1);
-        }
-      };
-      walk((book.navigation as any)?.toc ?? [], 0);
-      return out;
-    },
+    toc: () => tocEntries(),
     setTypography: (t: Typography) => {
       applyTypography(t);
       repaintHighlights();
@@ -1474,6 +1528,7 @@ async function openText(
     },
     destroy: () => {
       gone = true;
+      earlier.stop();
       window.cancelAnimationFrame(highlightSyncFrame);
       stage.removeEventListener("animationend", syncHighlights);
       stage.removeEventListener("animationcancel", syncHighlights);
